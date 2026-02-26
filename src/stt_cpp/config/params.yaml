@@ -1,0 +1,7 @@
+stt_node:
+  ros__parameters:
+    stt_enabled: true
+    groq_api_key: ""
+    groq_model: "whisper-large-v3"
+    groq_language: "ko"
+    groq_timeout_sec: 30

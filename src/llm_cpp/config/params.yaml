@@ -1,0 +1,27 @@
+llm_node:
+  ros__parameters:
+    llm_enabled: true
+    input_topic: "/intent_router/chat_text"
+    response_topic: "/llm/response"
+    provider_topic: "/llm/provider"
+    debug_topic: "/llm/debug"
+
+    system_prompt: "너는 한국어 음성 비서다. 1~2문장으로 짧고 명확하게 답해라. 모르는 내용은 모른다고 말하고, 실시간 정보가 필요하면 조회가 필요하다고 안내해라."
+
+    openai_api_key: ""
+    openai_model: "gpt-4o"
+    openai_url: "https://models.inference.ai.azure.com/chat/completions"
+    openai_timeout_sec: 20
+
+    groq_api_key: ""
+    groq_model: "llama-3.1-8b-instant"
+    groq_timeout_sec: 20
+
+    gemini_api_key: ""
+    gemini_model: "gemini-2.5-flash"
+    gemini_timeout_sec: 20
+
+    ollama_url: "http://127.0.0.1:11434/api/generate"
+    ollama_model: "qwen2.5:1.5b"
+    ollama_timeout_sec: 45
+    llm_provider: "auto"

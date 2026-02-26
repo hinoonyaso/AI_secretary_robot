@@ -1,0 +1,83 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+.env
+.env.*
+*.sqlite
+*.db
+
+# Node / frontend
+node_modules/
+.pnpm-store/
+.npm/
+.yarn/
+.next/
+dist/
+coverage/
+.turbo/
+
+# Build outputs (ROS/colcon/CMake/etc.)
+build/
+install/
+log/
+Log/
+work_log/
+trial_and_error/
+**/build/
+**/install/
+**/log/
+
+# Runtime logs and temp files
+*.log
+*.tmp
+*.swp
+*.out
+*.orig
+tmp/
+temp/
+
+# AI brain runtime outputs (timestamped reports/artifacts)
+ai_brain_*_[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9].json
+ai_brain_*_[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9].md
+ai_brain_*_[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9].log
+ai_brain_*_[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].md
+
+# Model/cache artifacts
+models/**/.cache/
+*.bin
+*.pt
+*.pth
+*.onnx
+*.gguf
+*.safetensors
+
+# Nested repo metadata in vendored SDK dirs
+SDK/*/.git/
+
+# Local container helper files
+Dockerfile.ai_brain
+run_ai_container.sh
+
+# Native/CMake intermediates
+*.o
+*.obj
+*.a
+*.so.*
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json

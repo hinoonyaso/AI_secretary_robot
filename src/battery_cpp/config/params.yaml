@@ -1,0 +1,8 @@
+battery_node:
+  ros__parameters:
+    input_battery_topic: "/ros_robot_controller/battery"
+    output_state_topic: "~/state"
+    output_voltage_topic: "~/voltage_mv"
+    full_voltage: 8.4
+    empty_voltage: 6.4
+    stale_timeout_sec: 2.0

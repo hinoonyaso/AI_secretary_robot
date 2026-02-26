@@ -1,0 +1,14 @@
+intent_router_node:
+  ros__parameters:
+    emergency_keywords:
+      - "멈춰"
+      - "정지"
+      - "stop"
+      - "그만"
+      - "위험"
+    groq_enabled: false
+    groq_api_key: ""
+    groq_model: "llama-3.3-70b-versatile"
+    groq_timeout_sec: 8
+    groq_temperature: 0.1
+    groq_max_tokens: 256

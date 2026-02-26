@@ -1,0 +1,31 @@
+tts_node:
+  ros__parameters:
+    input_topic: "/llm/response"
+    output_audio_topic: "/tts/audio_path"
+    output_engine_topic: "/tts/engine"
+    output_debug_topic: "/tts/debug"
+    output_playback_done_topic: "/tts/playback_done"
+    auto_play: true
+    playback_command: ""
+    alsa_device: "default"
+
+    tts_enabled: true
+    output_dir: "/home/ubuntu/rover_ws/src/tts_cpp/output"
+
+
+    edge_script_path: ""
+    edge_voice: "ko-KR-SunHiNeural"
+    edge_rate: "+0%"
+    edge_volume: "+0%"
+
+    melo_script_path: ""
+    melo_language: "KR"
+    melo_speaker: ""
+    melo_speed: "1.0"
+    melo_device: "auto"
+    melo_server_url: "http://127.0.0.1:5500/synthesize"
+    melo_server_timeout_sec: 15
+
+    espeak_executable: "espeak-ng"
+    espeak_voice: "ko"
+    tts_engine: "auto"

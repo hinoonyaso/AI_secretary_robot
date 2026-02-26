@@ -1,0 +1,35 @@
+IMU Status Note (saved for next terminal session)
+Date: 2026-02-10
+Workspace: /home/ubuntu/rover_ws
+
+Current symptom
+- imu_bridge_node starts, but prints:
+  "No IMU message received yet from /ros_robot_controller/imu_raw"
+
+Confirmed root cause
+- Upstream producer (ros_robot_controller) is not receiving IMU telemetry from STM32 over /dev/rrc.
+- Therefore /ros_robot_controller/imu_raw stays empty.
+
+Direct evidence
+- Log file:
+  /home/ubuntu/.ros/log/python3_26941_1770730892382.log
+- Repeated warning in that log:
+  "no IMU telemetry on /dev/rrc @ 1000000 (topic /ros_robot_controller/imu_raw will stay empty)"
+
+What is NOT the root cause
+- imu_bridge_cpp node logic itself is not the direct cause.
+- Depth camera (Orbbec DaBai DCW) is separate and was running normally.
+
+Fast recovery order
+1) Restart ros_robot_controller only:
+   ros2 launch ros_robot_controller ros_robot_controller.launch.py
+2) Check raw IMU:
+   ros2 topic echo /ros_robot_controller/imu_raw --once
+3) If still empty: power-cycle STM32 board and replug USB (/dev/rrc).
+4) Re-run ros_robot_controller and check /ros_robot_controller/imu_raw again.
+5) Then start bridge:
+   ros2 run imu_bridge_cpp imu_bridge_node --ros-args -p input_topic:=/ros_robot_controller/imu_raw -p output_topic:=/imu/data -p frame_id:=imu_link
+
+If issue keeps recurring
+- Treat as serial/firmware telemetry stability issue in STM32->ros_robot_controller path.
+- Add watchdog + auto-restart policy for ros_robot_controller.

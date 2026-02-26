@@ -1,0 +1,51 @@
+[imu_끊김분석]
+
+1) 현상 요약
+- /ros_robot_controller/imu_raw 토픽이 일시적으로 정상 수신되다가 중간에 끊김.
+- imu_bridge_node에서는 초기에는 "IMU OK"가 출력되다가 이후 "IMU timeout"으로 전환됨.
+
+2) 로그 기반 직접 원인
+- ros_robot_controller에서 아래 예외로 pub 스레드가 종료됨.
+  IndexError: index out of range
+  발생 위치:
+  - ros_robot_controller_node.py: pub_callback -> pub_battery_data
+  - ros_robot_controller_sdk.py: get_battery (data[0] 접근)
+- pub_callback 스레드가 배터리/IMU 포함 여러 publish를 함께 처리하므로,
+  배터리 파싱 예외 1회로 IMU publish도 같이 멈추는 구조임.
+
+3) 근본 배경 이슈(통신 품질)
+- 같은 구간에 아래 로그가 반복됨.
+  - "serial read failed: device reports readiness to read but returned no data"
+  - "校验失败"(체크섬 실패)
+- 의미:
+  - /dev/rrc 시리얼 프레임이 깨지거나
+  - 장치 순간 단절/전원 불안정/USB 품질 문제
+  - 또는 포트 다중 점유 가능성
+
+4) 적용한 코드 보완
+- 파일: src/ros_robot_controller/ros_robot_controller/ros_robot_controller_sdk.py
+  - get_battery()에 길이 검증 추가
+  - len(data) >= 3 && data[0] == 0x04 조건에서만 언팩
+  - 잘못된/짧은 프레임은 None 처리
+- 파일: src/ros_robot_controller/ros_robot_controller/ros_robot_controller_node.py
+  - pub_callback()에 try/except 보호 추가
+  - 개별 데이터 경로 오류가 나도 publisher 루프 자체는 유지
+
+5) 기대 효과
+- 깨진 프레임이 들어와도 IndexError로 스레드가 즉시 죽지 않음.
+- "잘 받다가 갑자기 완전 정지" 패턴이 크게 줄어듦.
+
+6) 재검증 절차
+1. colcon build --packages-select ros_robot_controller
+2. source install/setup.bash
+3. ros2 launch ros_robot_controller ros_robot_controller.launch.py
+4. ros2 topic hz /ros_robot_controller/imu_raw
+5. ros2 run imu_bridge_cpp imu_bridge_node
+6. 끊김 재발 시 즉시 확인:
+   - lsof /dev/rrc (다중 점유 확인)
+   - USB 케이블/허브/전원 교체 후 재시도
+
+7) 추가 권장(필요 시)
+- 시리얼 재연결(backoff) 정책 강화
+- CRC 실패 카운터/진단 토픽 추가
+- 배터리/IMU publish 루프 분리(장애 격리)
