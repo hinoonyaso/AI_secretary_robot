@@ -366,16 +366,16 @@ Block C — ROS 2 Vision 노드 (depth_camera_cpp 통합형):
 
 ---
 
-## 🤖 Prompt 4: Dockerfile — ROS 2 Heavy 패키지 + rover_ws 빌드
+## 🤖 Prompt 4: Dockerfile — ROS 2 Heavy 패키지 + workspace 빌드
 
 ```
 [Context — Prompt 3의 `vision-runtime` 스테이지 위에 이어서 작성]
 - Previous stage: `vision-runtime` (ONNX Runtime + llama.cpp + Piper + TRT C++ headers)
 - ROS 2 Humble base (ros-humble-ros-base)는 Prompt 1에서 이미 설치되어 있습니다.
-- 이 스테이지에서는 ROS 2의 무거운 패키지(MoveIt2, Nav2)와 rover_ws 빌드만 수행합니다.
+- 이 스테이지에서는 ROS 2의 무거운 패키지(MoveIt2, Nav2)와 workspace 빌드만 수행합니다.
 - Output: adds stage `ros2-runtime` to `docker/Dockerfile`
 
-[Existing rover_ws C++ packages to build — located at /home/ubuntu/rover_ws/src/]:
+[Existing workspace C++ packages to build — located at /home/ubuntu/AI_secretary_robot/src/]:
   - wake_vad_cpp      # Wake word + VAD (openwakeword, webrtcvad)
   - stt_cpp           # Moonshine ONNX STT node (libcurl for model API)
   - intent_router_cpp # KoSimCSE ONNX intent classifier
@@ -421,14 +421,14 @@ Block A — ROS 2 Heavy 패키지 추가 설치:
      ⚠️ 소스 빌드 시 /opt/rover/ws/src에 포함하지 말고 /opt/ros/humble/에 직접 설치.
         이렇게 해야 source /opt/ros/humble/setup.bash 한 번으로 자동 인식.
 
-Block B — rover_ws 빌드:
-  1. COPY the entire rover_ws/src/ into /opt/rover/ws/src/
-     (At build time: COPY --chown=root:root ./rover_ws/src /opt/rover/ws/src)
+Block B — workspace 빌드:
+  1. COPY the entire workspace src/ tree into /opt/rover/ws/src/
+     (At build time: COPY --chown=root:root ./src /opt/rover/ws/src)
 
   2. Update rosdep (init은 이미 완료):
      rosdep update --rosdistro humble
 
-  3. Install rosdep dependencies for rover_ws:
+  3. Install rosdep dependencies for workspace:
      source /opt/ros/humble/setup.bash
      cd /opt/rover/ws
      rosdep install --from-paths src --ignore-src -r -y \
