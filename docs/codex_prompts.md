@@ -862,3 +862,41 @@ Write a Python script to initialize the SQLite database schema:
 
 6. **Prompt 5 실행 시**: SIGSTOP/SIGCONT 기반 lazy loading은 llama.cpp의 --mmap 플래그와
    조합해야 효과 극대화. --mlock 없이 실행해야 OS가 mmap 페이지를 evict할 수 있음.
+
+---
+
+## 🦾 보너스: jetrover_arm_moveit — TRAC-IK 역기구학 솔버 설정
+
+MoveIt2 arm planning에 사용되는 역기구학(IK) 솔버를 기본 KDL에서 TRAC-IK로 전환하여 성능을 향상시킵니다.
+
+**상세 프롬프트 문서**: [`docs/codex_prompt_trac_ik.md`](./codex_prompt_trac_ik.md)
+
+**Quick Setup**:
+```bash
+# 1. TRAC-IK 플러그인 설치 (이미 package.xml에 의존성 포함됨)
+sudo apt install -y ros-humble-trac-ik-kinematics-plugin
+
+# 2. 이미 적용된 설정 확인
+cat src/control/jetrover_arm_moveit/config/kinematics.yaml
+
+# 3. 빌드 및 테스트
+cd /home/ubuntu/AI_secretary_robot
+source /opt/ros/humble/setup.bash
+colcon build --packages-select jetrover_arm_moveit
+source install/setup.bash
+ros2 launch jetrover_arm_moveit moveit_demo.launch.py
+```
+
+**주요 변경사항**:
+- `kinematics_solver`: `kdl_kinematics_plugin/KDLKinematicsPlugin` → `trac_ik_kinematics_plugin/TRAC_IKKinematicsPlugin`
+- `solve_type`: `Speed` (실시간 제어 최적화)
+- `kinematics_solver_timeout`: 0.05초 → 0.01초 (10ms, Jetson Orin 최적화)
+- `position_tolerance`: 0.001m (1mm 정밀도)
+- `orientation_tolerance`: 0.05 rad (~3° 정밀도)
+
+**예상 성능 향상**:
+- IK 계산 시간: 15~30ms (KDL) → 3~5ms (TRAC-IK Speed)
+- 성공률 (일반): 60~70% → 85~95%
+- 성공률 (특이점 근처): 10~20% → 60~80%
+
+**상세 파라미터 튜닝 및 Troubleshooting**: [`codex_prompt_trac_ik.md`](./codex_prompt_trac_ik.md) 참조

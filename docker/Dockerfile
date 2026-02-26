@@ -7,7 +7,8 @@
 # ----------------------------------------------------------------------------
 
 ARG L4T_TAG=r36.4.3
-FROM nvcr.io/nvidia/l4t-base:${L4T_TAG} AS base
+ARG BASE_IMAGE=nvcr.io/nvidia/l4t-base:${L4T_TAG}
+FROM ${BASE_IMAGE} AS base
 
 ARG JETPACK_VERSION=36.4.3
 
@@ -29,8 +30,10 @@ ENV DEBIAN_FRONTEND=noninteractive \
     ROS_DOMAIN_ID=42 \
     FASTRTPS_DEFAULT_PROFILES_FILE=/opt/rover/config/fastdds.xml
 
-# System deps + ROS 2 apt repo + ROS 2 Humble ros-base + locale + rover dirs + FastDDS profile
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# System deps + ROS 2 (install only when missing) + locale + rover dirs
+RUN set -eux; \
+    rm -f /etc/apt/sources.list.d/ros2.list /etc/apt/sources.list.d/ros-latest.list && \
+    apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates \
       curl \
       gpg \
@@ -57,29 +60,38 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       libswresample-dev \
       libusb-1.0-0-dev \
       udev \
-      libopencv-dev && \
+      python3-colcon-common-extensions \
+      python3-rosdep && \
+    if ! dpkg -s opencv-dev >/dev/null 2>&1 && ! dpkg -s libopencv-dev >/dev/null 2>&1; then \
+      apt-get install -y --no-install-recommends libopencv-dev; \
+    fi && \
     locale-gen ko_KR.UTF-8 && \
     update-locale LANG=ko_KR.UTF-8 && \
-    curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
-      | gpg --dearmor -o /usr/share/keyrings/ros-archive-keyring.gpg && \
-    echo "deb [arch=arm64 signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu jammy main" \
-      > /etc/apt/sources.list.d/ros2.list && \
-    apt-get update && apt-get install -y --no-install-recommends \
-      python3-colcon-common-extensions \
-      python3-rosdep \
-      ros-humble-ros-base \
-      ros-humble-rmw-fastrtps-cpp \
-      ros-humble-ament-cmake \
-      ros-humble-ament-index-cpp \
-      ros-humble-tf2-ros \
-      ros-humble-sensor-msgs \
-      ros-humble-geometry-msgs \
-      ros-humble-nav-msgs \
-      ros-humble-action-msgs \
-      ros-humble-lifecycle-msgs && \
+    ROS_SETUP=/opt/ros/humble/setup.bash; \
+    if [ -f /opt/ros/humble/install/setup.bash ]; then ROS_SETUP=/opt/ros/humble/install/setup.bash; fi; \
+    if [ ! -f "${ROS_SETUP}" ]; then \
+      curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
+        | gpg --dearmor -o /usr/share/keyrings/ros-archive-keyring.gpg; \
+      echo "deb [arch=arm64 signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu jammy main" \
+        > /etc/apt/sources.list.d/ros2.list; \
+      apt-get update; \
+      apt-get install -y --no-install-recommends \
+        ros-humble-ros-base \
+        ros-humble-rmw-fastrtps-cpp \
+        ros-humble-ament-cmake \
+        ros-humble-ament-index-cpp \
+        ros-humble-tf2-ros \
+        ros-humble-sensor-msgs \
+        ros-humble-geometry-msgs \
+        ros-humble-nav-msgs \
+        ros-humble-action-msgs \
+        ros-humble-lifecycle-msgs; \
+    fi && \
     rosdep init || true && \
     rosdep update --rosdistro humble && \
-    echo "source /opt/ros/humble/setup.bash" >> /etc/bash.bashrc && \
+    ROS_SETUP=/opt/ros/humble/setup.bash; \
+    if [ -f /opt/ros/humble/install/setup.bash ]; then ROS_SETUP=/opt/ros/humble/install/setup.bash; fi; \
+    echo "source ${ROS_SETUP}" >> /etc/bash.bashrc && \
     mkdir -p \
       /opt/rover/models/stt \
       /opt/rover/models/embedding \
@@ -133,7 +145,9 @@ RUN cat > /opt/rover/config/fastdds.xml <<'XML'
 XML
 
 # Verification: ROS 2 and rclpy availability
-RUN bash -c "source /opt/ros/humble/setup.bash && \
+RUN bash -c "if [ -f /opt/ros/humble/setup.bash ]; then source /opt/ros/humble/setup.bash; \
+             elif [ -f /opt/ros/humble/install/setup.bash ]; then source /opt/ros/humble/install/setup.bash; \
+             else echo 'ROS setup.bash not found' && exit 1; fi && \
              (ros2 --version || ros2 -h >/dev/null) && \
              python3 -c 'import rclpy; print(\"rclpy OK\")'"
 
@@ -141,6 +155,7 @@ FROM base AS ai-runtime
 
 ARG PIPER_TAR_URL="https://github.com/rhasspy/piper/releases/download/2023.11.14-2/piper_linux_aarch64.tar.gz"
 ARG PIPER_SHA256="fea0fd2d87c54dbc7078d0f878289f404bd4d6eea6e7444a77835d1537ab88eb"
+ARG ORT_WHL_URL_PRIMARY="https://pypi.jetson-ai-lab.io/jp6/cu126/%2Bf/4eb/e6a8902dc7708/onnxruntime_gpu-1.23.0-cp310-cp310-linux_aarch64.whl"
 
 ENV ORT_TENSORRT_ENGINE_CACHE_ENABLE=1 \
     ORT_TENSORRT_ENGINE_CACHE_PATH=/opt/rover/models/.trt_cache
@@ -151,18 +166,14 @@ RUN set -eux; \
     apt-get update && apt-get install -y --no-install-recommends \
       libnvinfer8 libnvinfer-dev libnvinfer-plugin8 libnvinfer-plugin-dev \
       libnvparsers8 libnvparsers-dev libnvonnxparsers8 libnvonnxparsers-dev && \
-    wget --progress=dot:giga -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null \
-      | gpg --dearmor > /usr/share/keyrings/kitware-archive-keyring.gpg && \
-    echo "deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ jammy main" \
-      > /etc/apt/sources.list.d/kitware.list && \
-    apt-get update && apt-get install -y --no-install-recommends cmake && \
-    cmake --version && \
-    pip3 install --no-cache-dir uv && \
-    git clone https://github.com/dusty-nv/jetson-containers /tmp/jc && \
-    cd /tmp/jc/packages/ml/onnxruntime && \
-    export UV_SYSTEM_PYTHON=1 ONNXRUNTIME_VERSION=1.17.0 ONNXRUNTIME_BRANCH=v1.17.0 ONNXRUNTIME_FLAGS=--allow_running_as_root CUDA_ARCHITECTURES=87 && \
-    ./build.sh --use-cache --no-deps && \
-    pip3 install --no-cache-dir \
+    if ! wget --user-agent='pip/24.0' --progress=dot:giga -O /tmp/ort/onnxruntime_gpu-1.23.0-cp310-cp310-linux_aarch64.whl "${ORT_WHL_URL_PRIMARY}"; then \
+      python3 -m pip download --no-deps \
+        --index-url https://pypi.jetson-ai-lab.io/jp6/cu126/+simple \
+        onnxruntime-gpu==1.23.0 \
+        -d /tmp/ort; \
+    fi && \
+    pip3 install --no-cache-dir --no-deps /tmp/ort/onnxruntime_gpu-1.23.0-cp310-cp310-linux_aarch64.whl && \
+    pip3 install --no-cache-dir --index-url https://pypi.org/simple \
       numpy==1.24.4 \
       onnx==1.15.0 \
       protobuf==3.20.3 \
@@ -170,7 +181,7 @@ RUN set -eux; \
       flatbuffers && \
     python3 -c "import onnxruntime as ort; d=ort.get_device(); print(d); assert d=='GPU'" && \
     rm -rf /var/lib/apt/lists/* && \
-    rm -rf /tmp/jc /tmp/ort
+    rm -rf /tmp/ort
 
 # Block B: llama.cpp (CUDA, SM87, HTTP enabled)
 RUN set -eux; \
@@ -195,8 +206,9 @@ RUN set -eux; \
     find build -type f \( -name 'libllama.so*' -o -name 'libggml.so*' -o -name 'libggml-cuda.so*' \) -exec cp -av {} /usr/local/lib/ \; && \
     install -d /usr/local/include/llama && \
     cp -a include/. /usr/local/include/llama/ && \
+    printf '%s\n' /usr/lib/aarch64-linux-gnu/nvidia > /etc/ld.so.conf.d/99-nvidia-tegra.conf && \
     ldconfig && \
-    llama-cli --version && \
+    LD_LIBRARY_PATH=/usr/lib/aarch64-linux-gnu/nvidia:/usr/local/cuda/lib64:${LD_LIBRARY_PATH} llama-cli --version && \
     rm -rf /tmp/llama.cpp
 
 # Block C: Piper TTS + Korean voice

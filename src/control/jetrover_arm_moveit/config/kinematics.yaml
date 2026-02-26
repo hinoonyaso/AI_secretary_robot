@@ -1,4 +1,30 @@
 arm:
-  kinematics_solver: kdl_kinematics_plugin/KDLKinematicsPlugin
-  kinematics_solver_timeout: 0.05
-  kinematics_solver_attempts: 6
+  # TRAC-IK 솔버로 변경 (KDL 대비 높은 성공률, 빠른 계산 속도)
+  kinematics_solver: trac_ik_kinematics_plugin/TRAC_IKKinematicsPlugin
+
+  # 타임아웃 (초): IK 계산 최대 시간
+  # TRAC-IK는 KDL보다 빠르므로 0.01초(10ms)로 설정 (Jetson Orin Nano 최적화)
+  kinematics_solver_timeout: 0.01
+
+  # 시도 횟수: TRAC-IK는 한 번에 해를 찾는 경우가 많아 3회면 충분
+  kinematics_solver_attempts: 3
+
+  # ===== TRAC-IK 전용 파라미터 =====
+
+  # solve_type: 해 탐색 전략
+  #   - Speed: 첫 번째 유효한 해를 즉시 반환 (가장 빠름, 실시간 제어 권장)
+  #   - Distance: 현재 관절 각도에서 가장 가까운 해 탐색 (부드러운 동작)
+  #   - Manipulation1: 조작성 최적화 (singularity 회피)
+  #   - Manipulation2: Manipulation1보다 더 엄격한 조작성 조건
+  solve_type: Speed
+
+  # position_tolerance (m): 목표 위치 허용 오차
+  # 0.001m (1mm) - 일반 픽앤플레이스 작업에 적합
+  position_tolerance: 0.001
+
+  # orientation_tolerance (rad): 목표 자세 허용 오차
+  # 0.05 rad ≈ 2.86° - 일반 작업에 적합
+  orientation_tolerance: 0.05
+
+  # epsilon: 최적화 알고리즘의 수렴 임계값 (기본값 유지)
+  epsilon: 1e-5

@@ -8,6 +8,7 @@ This package provides a practical MoveIt2 integration baseline for JetRover arm:
 
 ## 1) Install MoveIt2 + TRAC-IK
 
+### MoveIt2 설치
 ```bash
 sudo apt update
 sudo apt install -y \
@@ -15,9 +16,21 @@ sudo apt install -y \
   ros-humble-moveit-ros-planning-interface \
   ros-humble-moveit-setup-assistant \
   ros-humble-moveit-fake-controller-manager \
-  ros-humble-trac-ik-kinematics-plugin \
   ros-humble-xacro
 ```
+
+### TRAC-IK 설치 (소스 빌드 필요)
+
+**중요**: `ros-humble-trac-ik-kinematics-plugin`은 apt 저장소에 없습니다.
+소스에서 빌드해야 합니다.
+
+**자동 설치 (권장)**:
+```bash
+cd /home/ubuntu/AI_secretary_robot
+./scripts/install_trac_ik.sh
+```
+
+**수동 설치**: [docs/trac_ik_installation.md](../../../docs/trac_ik_installation.md) 참조
 
 ## 2) Build
 

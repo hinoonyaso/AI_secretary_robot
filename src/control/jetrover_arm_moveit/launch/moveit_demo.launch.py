@@ -36,8 +36,8 @@ def generate_launch_description():
     )
     fake_joint_state_arg = DeclareLaunchArgument(
         "use_fake_joint_states",
-        default_value="false",
-        description="Use joint_state_publisher instead of hardware servo state bridge",
+        default_value="true",
+        description="Use joint_state_publisher for RViz/demo; set false for real hardware servo bridge",
     )
     servo_calibration_arg = DeclareLaunchArgument(
         "servo_calibration_yaml",
