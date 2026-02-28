@@ -2,6 +2,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <string>
 #include <thread>
@@ -13,6 +14,7 @@
 #include "sensor_msgs/msg/joy.hpp"
 #include "std_msgs/msg/bool.hpp"
 #include "std_msgs/msg/u_int16.hpp"
+#include "std_msgs/msg/u_int8_multi_array.hpp"
 #include "std_srvs/srv/trigger.hpp"
 
 #include "ros_robot_controller_msgs/msg/bus_servo_state.hpp"
@@ -48,6 +50,8 @@ public:
     declare_parameter<vector<int64_t>>(
       "baudrate_candidates", {1000000, 921600, 460800, 256000, 115200});
     declare_parameter<string>("imu_frame", "imu_link");
+    declare_parameter<int>("motor_id_offset", 0);
+    declare_parameter<bool>("publish_motor_raw_frame", false);
     declare_parameter<bool>("init_finish", false);
 
     const auto device = get_parameter("device").as_string();
@@ -56,6 +60,8 @@ public:
     const auto device_candidates = get_parameter("device_candidates").as_string_array();
     const auto baudrate_candidates = get_parameter("baudrate_candidates").as_integer_array();
     imu_frame_ = get_parameter("imu_frame").as_string();
+    motor_id_offset_ = static_cast<int>(get_parameter("motor_id_offset").as_int());
+    publish_motor_raw_frame_ = get_parameter("publish_motor_raw_frame").as_bool();
 
     if (auto_detect) {
       auto_detect_board(device, baudrate, device_candidates, baudrate_candidates);
@@ -67,12 +73,16 @@ public:
     }
 
     RCLCPP_INFO(get_logger(), "serial: %s @ %d", selected_device_.c_str(), selected_baudrate_);
+    RCLCPP_INFO(get_logger(), "motor_id_offset: %d", motor_id_offset_);
+    RCLCPP_INFO(get_logger(), "publish_motor_raw_frame: %s", publish_motor_raw_frame_ ? "true" : "false");
+    board_->set_motor_id_offset(motor_id_offset_);
 
     imu_pub_ = create_publisher<sensor_msgs::msg::Imu>("~/imu_raw", 1);
     joy_pub_ = create_publisher<sensor_msgs::msg::Joy>("~/joy", 1);
     sbus_pub_ = create_publisher<ros_robot_controller_msgs::msg::Sbus>("~/sbus", 1);
     button_pub_ = create_publisher<ros_robot_controller_msgs::msg::ButtonState>("~/button", 1);
     battery_pub_ = create_publisher<std_msgs::msg::UInt16>("~/battery", 1);
+    motor_raw_pub_ = create_publisher<std_msgs::msg::UInt8MultiArray>("~/motor_raw_frame", 10);
 
     led_sub_ = create_subscription<ros_robot_controller_msgs::msg::LedState>(
       "~/set_led", 5, bind(&RosRobotControllerCppNode::set_led_state, this, placeholders::_1));
@@ -112,7 +122,7 @@ public:
 
     try {
       board_->pwm_servo_set_offset(1, 0);
-      board_->set_motor_speed({{1, 0.0}, {2, 0.0}, {3, 0.0}, {4, 0.0}});
+      board_->set_motor_speed(make_stop_speeds());
     } catch (const exception & e) {
       RCLCPP_WARN(get_logger(), "initial command failed: %s", e.what());
     }
@@ -128,7 +138,7 @@ public:
     if (board_) {
       board_->enable_reception(false);
       try {
-        board_->set_motor_speed({{1, 0.0}, {2, 0.0}, {3, 0.0}, {4, 0.0}});
+        board_->set_motor_speed(make_stop_speeds());
       } catch (...) {
       }
       board_->close();
@@ -207,6 +217,7 @@ private:
       pub_imu_data();
       pub_sbus_data();
       pub_battery_data();
+      pub_motor_raw_data();
     } catch (const exception & e) {
       RCLCPP_ERROR(get_logger(), "publisher loop error: %s", e.what());
     }
@@ -247,7 +258,17 @@ private:
     vector<pair<uint16_t, double>> data;
     data.reserve(msg->data.size());
     for (const auto & i : msg->data) {
-      data.emplace_back(i.id, i.rps);
+      const auto hw_id = to_hw_motor_id(i.id);
+      if (!hw_id.has_value()) {
+        RCLCPP_WARN(
+          get_logger(), "invalid motor id mapping: ros_id=%u offset=%d", i.id, motor_id_offset_);
+        continue;
+      }
+      data.emplace_back(hw_id.value(), i.rps);
+    }
+    if (data.empty()) {
+      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000, "all motor commands were filtered");
+      return;
     }
     board_->set_motor_speed(data);
   }
@@ -554,6 +575,31 @@ private:
     imu_pub_->publish(msg);
   }
 
+  /// MOTOR 함수 raw payload를 그대로 발행해 실측 엔코더 프로토콜 역추적에 사용
+  void pub_motor_raw_data()
+  {
+    if (!publish_motor_raw_frame_) {
+      return;
+    }
+    auto data = board_->get_motor_raw_frame();
+    if (!data.has_value()) {
+      return;
+    }
+
+    std_msgs::msg::UInt8MultiArray msg;
+    msg.data = data.value();
+    motor_raw_pub_->publish(msg);
+
+    if ((now() - last_motor_raw_log_time_).seconds() > 1.0) {
+      last_motor_raw_log_time_ = now();
+      RCLCPP_INFO(
+        get_logger(),
+        "motor raw frame received: len=%zu first_byte=0x%02X",
+        msg.data.size(),
+        msg.data.empty() ? 0 : msg.data.front());
+    }
+  }
+
   /// 초기화 완료 확인 서비스(항상 success=true 반환)
   void get_node_state(
     const shared_ptr<std_srvs::srv::Trigger::Request> /*request*/,
@@ -562,9 +608,33 @@ private:
     response->success = true;
   }
 
+  optional<uint16_t> to_hw_motor_id(uint16_t ros_id) const
+  {
+    const int mapped = static_cast<int>(ros_id) + motor_id_offset_;
+    if (mapped < 0 || mapped > numeric_limits<uint8_t>::max()) {
+      return nullopt;
+    }
+    return static_cast<uint16_t>(mapped);
+  }
+
+  vector<pair<uint16_t, double>> make_stop_speeds() const
+  {
+    vector<pair<uint16_t, double>> out;
+    out.reserve(4);
+    for (uint16_t ros_id = 1; ros_id <= 4; ++ros_id) {
+      const auto hw_id = to_hw_motor_id(ros_id);
+      if (hw_id.has_value()) {
+        out.emplace_back(hw_id.value(), 0.0);
+      }
+    }
+    return out;
+  }
+
 private:
   double gravity_;
   bool enable_reception_flag_{true};
+  int motor_id_offset_{0};
+  bool publish_motor_raw_frame_{false};
 
   string selected_device_;
   int selected_baudrate_{1000000};
@@ -572,12 +642,14 @@ private:
 
   unique_ptr<Board> board_;
   rclcpp::Time last_imu_missing_warn_{0, 0, RCL_ROS_TIME};
+  rclcpp::Time last_motor_raw_log_time_{0, 0, RCL_ROS_TIME};
 
   rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr imu_pub_;
   rclcpp::Publisher<sensor_msgs::msg::Joy>::SharedPtr joy_pub_;
   rclcpp::Publisher<ros_robot_controller_msgs::msg::Sbus>::SharedPtr sbus_pub_;
   rclcpp::Publisher<ros_robot_controller_msgs::msg::ButtonState>::SharedPtr button_pub_;
   rclcpp::Publisher<std_msgs::msg::UInt16>::SharedPtr battery_pub_;
+  rclcpp::Publisher<std_msgs::msg::UInt8MultiArray>::SharedPtr motor_raw_pub_;
 
   rclcpp::Subscription<ros_robot_controller_msgs::msg::LedState>::SharedPtr led_sub_;
   rclcpp::Subscription<ros_robot_controller_msgs::msg::BuzzerState>::SharedPtr buzzer_sub_;

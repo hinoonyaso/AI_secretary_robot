@@ -900,3 +900,338 @@ ros2 launch jetrover_arm_moveit moveit_demo.launch.py
 - 성공률 (특이점 근처): 10~20% → 60~80%
 
 **상세 파라미터 튜닝 및 Troubleshooting**: [`codex_prompt_trac_ik.md`](./codex_prompt_trac_ik.md) 참조
+
+---
+
+## 🤖 rover_autonomy_cpp 키보드 바퀴 제어 문제 진단 및 해결
+
+### 문제 개요
+`rover_autonomy_cpp/src/keyboard_motor_node.cpp`로 키보드 입력(w/s/a/d)을 통해 바퀴를 제어하려 했으나, 바퀴가 전혀 움직이지 않는 증상.
+
+### 시스템 아키텍처 분석
+
+**데이터 흐름**:
+```
+[keyboard_motor_node.cpp]
+    ↓ 키보드 입력 (w/s/a/d)
+    ↓ RPS 값 변환 (forward_rps=2.0, turn_rps=1.6)
+    ↓ 발행: /ros_robot_controller/set_motor (MotorsState msg)
+          msg.data[].id = 모터 ID (1,2,3,4)
+          msg.data[].rps = 회전 속도 (revolutions per second)
+[ros_robot_controller_cpp_node.cpp]
+    ↓ 구독: /ros_robot_controller/set_motor
+    ↓ set_motor_state() 함수
+    ↓ board_->set_motor_speed(data)
+[board.cpp]
+    ↓ set_motor_speed() 함수
+    ↓ ⚠️ 중요: motor_id를 1 감소 (line 538: s.first - 1)
+    ↓ 시리얼 패킷 전송 (/dev/rrc, /dev/ttyCH341USB0 등)
+[Hardware Controller Board]
+    ↓ 모터 구동
+```
+
+### 문제 원인 체크리스트 Codex 프롬프트
+
+```markdown
+[Context]
+- Project: AI_secretary_robot on Jetson Orin Nano
+- Node: rover_autonomy_cpp/keyboard_motor_node
+- Issue: Keyboard input (w/a/s/d) doesn't move the wheels
+- Files involved:
+  - src/control/rover_autonomy_cpp/src/keyboard_motor_node.cpp
+  - src/control/ros_robot_controller_cpp/src/ros_robot_controller_cpp_node.cpp
+  - src/control/ros_robot_controller_cpp/src/board.cpp
+
+[Task]
+Diagnose why the rover wheels are not moving when keyboard commands are sent,
+and provide a step-by-step troubleshooting plan with ROS 2 commands.
+
+[Architecture Reference]
+Data flow: keyboard_motor_node → /ros_robot_controller/set_motor topic →
+ros_robot_controller_cpp_node → board.cpp (serial) → hardware controller
+
+Key parameters in keyboard_motor_node.cpp:
+- output_mode: "motor" (default) or "cmd_vel"
+- motor_topic: "/ros_robot_controller/set_motor"
+- left_motor_ids: [1, 2]   # left_front + left_back
+- right_motor_ids: [3, 4]  # right_front + right_back
+- forward_rps: 2.0
+- turn_rps: 1.6
+- left_forward_sign: 1.0
+- right_forward_sign: 1.0
+
+Hardware motor mapping:
+  ID 1 = left_front  (motor1)
+  ID 2 = left_back   (motor2)
+  ID 3 = right_front (motor3)
+  ID 4 = right_back  (motor4)
+
+Critical code in board.cpp:532-541:
+  void Board::set_motor_speed(const vector<pair<uint16_t, double>> & speeds)
+  {
+    vector<uint8_t> data;
+    data.push_back(0x01);
+    data.push_back(static_cast<uint8_t>(speeds.size()));
+    for (const auto & s : speeds) {
+      data.push_back(static_cast<uint8_t>(s.first - 1));  // ⚠️ ID decremented
+      append_f32(data, static_cast<float>(s.second));
+    }
+    buf_write(PacketFunction::MOTOR, data);
+  }
+
+[Diagnostic Steps — Execute in order]
+
+Step 1 — Verify keyboard_motor_node is running:
+  Command:
+    ros2 node list
+
+  Expected output should include:
+    /keyboard_motor_node
+
+  If missing:
+    ros2 launch rover_autonomy_cpp keyboard_motor.launch.py
+
+Step 2 — Check if keyboard input is being read:
+  Command:
+    ros2 topic echo /ros_robot_controller/set_motor
+
+  Then press 'w' key in the keyboard_motor_node terminal.
+
+  Expected output:
+    data:
+    - id: 1
+      rps: 2.0
+    - id: 3
+      rps: 2.0
+    - id: 2
+      rps: 2.0
+    - id: 4
+      rps: 2.0
+
+  ⚠️ If no output appears:
+    - Terminal issue: keyboard_motor_node may not have terminal focus
+    - Raw mode failure: check logs for "tcgetattr failed" or "keyboard input may not work"
+    FIX: Run in a proper terminal (not via systemd or background)
+         OR: Use ssh with -t flag: ssh -t ubuntu@jetson "ros2 run ..."
+
+Step 3 — Verify ros_robot_controller_cpp_node is running:
+  Command:
+    ros2 node list | grep ros_robot_controller
+
+  Expected:
+    /ros_robot_controller
+
+  If missing:
+    ros2 run ros_robot_controller_cpp ros_robot_controller_cpp_node
+
+  Check logs:
+    ros2 run ros_robot_controller_cpp ros_robot_controller_cpp_node --ros-args --log-level debug
+
+  Look for:
+    [INFO] [ros_robot_controller]: serial: /dev/rrc @ 1000000
+    [INFO] [ros_robot_controller]: start
+
+  ⚠️ If you see "failed to open serial port":
+    - Check device exists: ls -l /dev/rrc /dev/ttyCH341USB*
+    - Check permissions: sudo chmod 666 /dev/ttyCH341USB0
+    - Add udev rule:
+      echo 'KERNEL=="ttyCH341USB[0-9]*", MODE="0666"' | \
+        sudo tee /etc/udev/rules.d/99-ch341.rules
+      sudo udevadm control --reload-rules && sudo udevadm trigger
+
+Step 4 — Monitor serial communication:
+  Enable debug logging in board.cpp (check buf_write function):
+
+  Add temporary debug print in board.cpp:532:
+    void Board::set_motor_speed(const vector<pair<uint16_t, double>> & speeds)
+    {
+      std::cout << "[DEBUG] set_motor_speed called with " << speeds.size()
+                << " motors" << std::endl;
+      for (const auto & s : speeds) {
+        std::cout << "  Motor ID: " << s.first << " -> " << (s.first - 1)
+                  << ", RPS: " << s.second << std::endl;
+      }
+      // ... rest of function
+    }
+
+  Rebuild:
+    cd /home/ubuntu/AI_secretary_robot
+    source /opt/ros/humble/setup.bash
+    colcon build --packages-select ros_robot_controller_cpp
+    source install/setup.bash
+    ros2 run ros_robot_controller_cpp ros_robot_controller_cpp_node
+
+  Press 'w' in keyboard_motor_node terminal and observe debug output.
+
+Step 5 — Check motor ID mapping:
+  The board.cpp decrements motor IDs by 1 (line 538: s.first - 1).
+  This means:
+    ROS ID 1 → Hardware ID 0
+    ROS ID 2 → Hardware ID 1
+    ROS ID 3 → Hardware ID 2
+    ROS ID 4 → Hardware ID 3
+
+  ⚠️ If hardware expects 1-based IDs, this will send commands to wrong motors!
+
+  FIX Option A (if hardware is 1-based):
+    Remove the "- 1" in board.cpp:538:
+      data.push_back(static_cast<uint8_t>(s.first));  // No decrement
+
+  FIX Option B (if hardware mapping is different):
+    Adjust motor IDs in launch file or keyboard_motor_node params.
+
+    Example for standard 4-wheel rover (IDs 1-4, left=1,2 right=3,4):
+      ros2 run rover_autonomy_cpp keyboard_motor_node \
+        --ros-args \
+        -p left_motor_ids:=[1,2] \
+        -p right_motor_ids:=[3,4]
+
+    Example if hardware uses 0-based IDs (rare):
+      ros2 run rover_autonomy_cpp keyboard_motor_node \
+        --ros-args \
+        -p left_motor_ids:=[0,1] \
+        -p right_motor_ids:=[2,3]
+
+Step 6 — Test with manual ROS message publish:
+  Bypass keyboard input, send motor commands directly:
+
+  Command:
+    ros2 topic pub /ros_robot_controller/set_motor \
+      ros_robot_controller_msgs/msg/MotorsState \
+      "{data: [{id: 1, rps: 1.0}, {id: 2, rps: 1.0}, {id: 3, rps: 1.0}, {id: 4, rps: 1.0}]}" \
+      --once
+
+  If wheels move with this command BUT NOT with keyboard input:
+    → Problem is in keyboard_motor_node (terminal focus, raw mode setup)
+
+  If wheels still don't move:
+    → Problem is in ros_robot_controller_cpp or hardware connection
+
+Step 7 — Check hardware serial protocol:
+  Use minicom or screen to monitor raw serial traffic:
+
+  Terminal 1:
+    sudo minicom -D /dev/ttyCH341USB0 -b 1000000
+
+  Terminal 2:
+    ros2 topic pub /ros_robot_controller/set_motor ... (from Step 6)
+
+  In minicom, you should see binary data packets being sent.
+  If no data appears → buf_write() in board.cpp is failing (check fd_ validity)
+
+Step 8 — Verify board initialization:
+  Check ros_robot_controller_cpp_node startup logs for:
+    "serial: /dev/XXX @ NNNNNN"
+    "start"
+
+  If you see "auto_detect_serial" searching multiple devices:
+    [INFO] trying /dev/rrc @ 1000000
+    [INFO] trying /dev/ttyCH341USB0 @ 1000000
+    ...
+    [INFO] serial: /dev/ttyCH341USB0 @ 1000000
+
+  ⚠️ If auto-detection fails on all candidates:
+    - Check USB cable connection
+    - Verify board is powered on
+    - Try manual device specification:
+      ros2 run ros_robot_controller_cpp ros_robot_controller_cpp_node \
+        --ros-args \
+        -p auto_detect_serial:=false \
+        -p device:=/dev/ttyCH341USB0 \
+        -p baudrate:=1000000
+
+Step 9 — Check motor sign convention:
+  Default parameters:
+    left_forward_sign: 1.0
+    right_forward_sign: 1.0
+
+  If wheels are configured in reverse:
+    Try inverting one side:
+      ros2 run rover_autonomy_cpp keyboard_motor_node \
+        --ros-args \
+        -p left_forward_sign:=-1.0
+
+  Or modify in launch/keyboard_motor.launch.py:
+    parameters=[{
+      'left_forward_sign': -1.0,
+      'right_forward_sign': 1.0,
+    }]
+
+Step 10 — Verify RPS magnitude is sufficient:
+  Default forward_rps=2.0 may be too low for some motors.
+
+  Test with higher speed:
+    ros2 run rover_autonomy_cpp keyboard_motor_node \
+      --ros-args \
+      -p forward_rps:=5.0 \
+      -p turn_rps:=4.0
+
+[Common Root Causes and Fixes]
+
+Issue: "keyboard input may not work" in logs
+  Cause: Terminal not in raw mode (running via systemd/screen/background)
+  Fix: Run in foreground terminal with stdin attached
+       ssh -t ubuntu@jetson "cd ~/AI_secretary_robot && ros2 run ..."
+
+Issue: Wheels don't move but topic shows messages
+  Cause 1: Serial device permission denied
+    Fix: sudo chmod 666 /dev/ttyCH341USB0
+         OR: Add user to dialout group: sudo usermod -a -G dialout $USER
+
+  Cause 2: Wrong motor ID mapping (0-based vs 1-based)
+    Fix: Remove "- 1" in board.cpp:538 OR adjust ROS motor IDs
+
+  Cause 3: Board not initialized (no serial connection)
+    Fix: Check auto_detect_serial logs, verify USB cable, try manual device param
+
+Issue: Wheels move in wrong direction
+  Cause: Motor wiring reversed or sign convention mismatch
+  Fix: Invert left_forward_sign or right_forward_sign parameter
+
+Issue: Wheels move but stop after 2 seconds
+  Cause: idle_timeout_sec parameter (default: 2.0)
+  Fix: Keep pressing keys OR disable timeout:
+       ros2 run rover_autonomy_cpp keyboard_motor_node \
+         --ros-args -p idle_timeout_sec:=0.0
+
+[Verification Command — Final Test]
+After applying fixes, run full integration test:
+
+Terminal 1 (Controller):
+  ros2 launch ros_robot_controller_cpp ros_robot_controller_cpp.launch.py
+
+Terminal 2 (Keyboard Teleop):
+  ros2 run rover_autonomy_cpp keyboard_motor_node
+
+Terminal 3 (Monitor):
+  ros2 topic echo /ros_robot_controller/set_motor
+
+Press 'w' in Terminal 2.
+Expected: Terminal 3 shows RPS values, wheels move forward.
+
+[Output]
+- Provide a summary of which diagnostic step revealed the root cause
+- List all applied fixes with file paths and line numbers
+- Include the final working configuration (parameters, launch file)
+- Add a "Lessons Learned" section explaining why the issue occurred
+```
+
+### Quick Reference — Most Likely Issues
+
+| Symptom | Root Cause | Fix Command |
+|:--------|:-----------|:------------|
+| 토픽에 메시지 안 나옴 | 터미널 raw 모드 실패 | `ssh -t` 또는 foreground 실행 |
+| "permission denied" | 시리얼 권한 없음 | `sudo chmod 666 /dev/ttyCH341USB0` |
+| 대각선 또는 제자리 회전 | **모터 ID 매핑 오류** (좌우 혼합) | `-p left_motor_ids:=[1,2] -p right_motor_ids:=[3,4]` |
+| 메시지는 나오는데 안 움직임 | 모터 ID 오프셋 오류 (0-based vs 1-based) | `board.cpp:538` 수정 (`s.first - 1` → `s.first`) |
+| 잠깐 움직이다 멈춤 | idle_timeout | `-p idle_timeout_sec:=0.0` |
+| 반대 방향으로 움직임 | 모터 sign 반전 | `-p left_forward_sign:=-1.0` |
+
+### 파일 위치 Quick Link
+
+- 키보드 노드: [src/control/rover_autonomy_cpp/src/keyboard_motor_node.cpp](../src/control/rover_autonomy_cpp/src/keyboard_motor_node.cpp)
+- 하드웨어 컨트롤러: [src/control/ros_robot_controller_cpp/src/ros_robot_controller_cpp_node.cpp](../src/control/ros_robot_controller_cpp/src/ros_robot_controller_cpp_node.cpp)
+- 시리얼 통신: [src/control/ros_robot_controller_cpp/src/board.cpp:532-542](../src/control/ros_robot_controller_cpp/src/board.cpp#L532-L542)
+- 런치 파일: [src/control/rover_autonomy_cpp/launch/keyboard_motor.launch.py](../src/control/rover_autonomy_cpp/launch/keyboard_motor.launch.py)
+
+---

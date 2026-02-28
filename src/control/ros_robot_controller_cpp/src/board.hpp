@@ -37,11 +37,13 @@ public:
   std::optional<uint16_t> get_battery();
   std::optional<std::pair<uint8_t, uint8_t>> get_button();
   std::optional<std::array<float, 6>> get_imu();
+  std::optional<std::vector<uint8_t>> get_motor_raw_frame();
   std::optional<std::pair<std::array<float, 8>, std::array<int32_t, 16>>> get_gamepad();
   std::optional<std::vector<float>> get_sbus();
 
   void set_led(float on_time, float off_time, uint16_t repeat = 1, uint8_t led_id = 1);
   void set_buzzer(uint16_t freq, float on_time, float off_time, uint16_t repeat = 1);
+  void set_motor_id_offset(int offset);
   void set_motor_speed(const std::vector<std::pair<uint16_t, double>> & speeds);
   void set_oled_text(uint8_t line, const std::string & text);
 
@@ -118,6 +120,7 @@ private:
   std::string device_;
   int baudrate_;
   double timeout_sec_;
+  int motor_id_offset_{0};
 
   int fd_{-1};
   std::mutex port_mutex_;

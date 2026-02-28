@@ -429,6 +429,14 @@ optional<array<float, 6>> Board::get_imu()
   return out;
 }
 
+optional<vector<uint8_t>> Board::get_motor_raw_frame()
+{
+  if (!enable_recv_) {
+    return nullopt;
+  }
+  return pop_frame(static_cast<uint8_t>(PacketFunction::MOTOR));
+}
+
 optional<pair<array<float, 8>, array<int32_t, 16>>> Board::get_gamepad()
 {
   if (!enable_recv_) {
@@ -529,13 +537,18 @@ void Board::set_buzzer(uint16_t freq, float on_time, float off_time, uint16_t re
   buf_write(PacketFunction::BUZZER, data);
 }
 
+void Board::set_motor_id_offset(int offset)
+{
+  motor_id_offset_ = offset;
+}
+
 void Board::set_motor_speed(const vector<pair<uint16_t, double>> & speeds)
 {
   vector<uint8_t> data;
   data.push_back(0x01);
   data.push_back(static_cast<uint8_t>(speeds.size()));
   for (const auto & s : speeds) {
-    data.push_back(static_cast<uint8_t>(s.first - 1));
+    data.push_back(static_cast<uint8_t>(static_cast<int>(s.first) + motor_id_offset_));
     append_f32(data, static_cast<float>(s.second));
   }
   buf_write(PacketFunction::MOTOR, data);

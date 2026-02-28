@@ -10,5 +10,9 @@ def generate_launch_description():
             name='keyboard_motor_node',
             output='screen',
             emulate_tty=True,
+            parameters=[{
+                'left_motor_ids': [1, 2],
+                'right_motor_ids': [3, 4],
+            }],
         )
     ])

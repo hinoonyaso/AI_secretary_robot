@@ -10,6 +10,8 @@ def generate_launch_description():
     baudrate = LaunchConfiguration('baudrate', default='1000000')
     imu_frame = LaunchConfiguration('imu_frame', default='imu_link')
     auto_detect_serial = LaunchConfiguration('auto_detect_serial', default='true')
+    motor_id_offset = LaunchConfiguration('motor_id_offset', default='0')
+    publish_motor_raw_frame = LaunchConfiguration('publish_motor_raw_frame', default='false')
 
     kill_stale = ExecuteProcess(
         cmd=['bash', '-c',
@@ -30,6 +32,8 @@ def generate_launch_description():
                     'baudrate': ParameterValue(baudrate, value_type=int),
                     'imu_frame': imu_frame,
                     'auto_detect_serial': ParameterValue(auto_detect_serial, value_type=bool),
+                    'motor_id_offset': ParameterValue(motor_id_offset, value_type=int),
+                    'publish_motor_raw_frame': ParameterValue(publish_motor_raw_frame, value_type=bool),
                 }],
             ),
         ],
@@ -40,6 +44,8 @@ def generate_launch_description():
         DeclareLaunchArgument('baudrate', default_value=baudrate),
         DeclareLaunchArgument('imu_frame', default_value=imu_frame),
         DeclareLaunchArgument('auto_detect_serial', default_value=auto_detect_serial),
+        DeclareLaunchArgument('motor_id_offset', default_value=motor_id_offset),
+        DeclareLaunchArgument('publish_motor_raw_frame', default_value=publish_motor_raw_frame),
         kill_stale,
         start_node,
     ])

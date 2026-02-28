@@ -1,4 +1,4 @@
-# 🤖 JetRover "Jarvis" 프로젝트 정의서
+# 🤖 JetRover "Rover" 프로젝트 정의서
 
 **버전**: 3.0 (DB 포함 완전판)  
 **날짜**: 2026년 2월 23일  
@@ -38,9 +38,9 @@
 | 저장소 | 128GB NVMe SSD | OS, 모델, **SQLite DB** | 2W | M.2 |
 | 배터리 | 11.1V 6000mAh LiPo¹ | 전원 공급 | - | DC |
 | 휠 시스템 | 4WD 메카넘 휠 | 전방향 이동 | 5~15W | UART |
-| 로봇 암 | 6DOF + 그리퍼 | 물체 조작 | 3~8W | UART |
-| LiDAR | SLAMTEC A1 | 360° 주변 인식 | **0.5W**² | UART |
-| 카메라 | Orbbec Dabai DCW | RGB-D 깊이 감지 | 평균 2W, 최대 5W³ | **USB 2.0**⁴ |
+| 로봇 암 | 5DOF + 그리퍼 (6서보)⁶ | 물체 조작 | 3~8W | UART |
+| LiDAR | SLAMTEC RPLIDAR A1 | 360° 주변 인식 | **0.5W**² | UART |
+| 카메라 | Orbbec Dabai DCW | RGB 1920×1080@60FPS, Depth 0.2~2.5m | 평균 2W, 최대 5W³ | **USB Type-C**⁴ |
 | IMU | MPU6050/9250 | 자세/가속도 측정 | **0.02W**⁵ | I2C |
 | 마이크 | ReSpeaker 6-Mic Array | 360° 음성 수집 | 0.5W | USB/I2S |
 | 스피커 | 3W 스테레오 | 음성 출력 | 0.5W | 3.5mm |
@@ -48,10 +48,11 @@
 
 &gt; **참고**:  
 &gt; ¹ 배터리 사양은 JetRover 공식 문서 재확인 권장  
-&gt; ² SLAMTEC A1: 5V/100mA = 0.5W (데이터시트). 단, Work mode에서 scanner 300~350mA 별도 소비 가능  
-&gt; ³ Orbbec Dabai: 평균 &lt;2.3W, 최대 &lt;5W  
-&gt; ⁴ Orbbec Dabai DCW 공식: USB 2.0 인터페이스  
-&gt; ⁵ MPU6050/9250: 3.9mA@3.3V = 0.02W
+&gt; ² SLAMTEC RPLIDAR A1: 5V/100mA = 0.5W (데이터시트). 단, Work mode에서 scanner 300~350mA 별도 소비 가능  
+&gt; ³ Orbbec Dabai DCW: 평균 <2.3W, 최대 <5W. RGB 1920×1080@60FPS, Depth 640×400/320×200@5~30FPS  
+&gt; ⁴ Orbbec Dabai DCW 공식: USB Type-C 인터페이스  
+&gt; ⁵ MPU6050/9250: 3.9mA@3.3V = 0.02W  
+&gt; ⁶ 로봇 암: 서보 6개 (ID 1~5: 팔 5DOF, ID 10: 그리퍼). 그리퍼는 개폐만 수행하므로 DOF에 미포함
 
 ---
 
@@ -87,7 +88,7 @@
 | 2 | **VLM** | `moondream:1.8b`⁷ | **1.8B** | VQAv2 74.7% (v1) / 79.4% (v2) | 1.5GB | 0.6GB | 5W | 2.0~2.5초 |
 | 3 | **OCR** | `PaddleOCR PP-OCRv3` | **17M**⁸ | CER 13~18%⁹ | 0.5GB | 0.3GB | 2W | 20~30ms |
 | 4 | **ASR** | **`moonshine-tiny-ko`** | **27M**¹⁰ | **CER 8.9%** (Fleurs KO) | **0.5GB** | 0.3GB | 2W | 0.1~0.2초 |
-| 5 | **TTS** | `MeloTTS` | 체크포인트 **~200MB**¹¹ | MOS 4.2/5.0 | 0GB | 0.4GB | 0.5W | 0.2~0.3초 |
+| 5 | **TTS** | `Piper` | 체크포인트 **~80MB**¹¹ | MOS 4.0/5.0 | 0GB | 0.4GB | 0.5W | 0.1~0.2초 |
 | 6 | **Wake Word** | `openwakeword` | 5M | 검출률 **95%+**¹² | 0GB | 0.05GB | 0.1W | &lt; 100ms |
 
 &gt; **참고**:  
@@ -96,7 +97,7 @@
 &gt; ⁸ PP-OCRv3: Detection + Recognition 합 17M  
 &gt; ⁹ PaddleOCR 한국어 CER 공식 미공개, 내부 테스트 기준  
 &gt; ¹⁰ Moonshine Tiny: **27M** (27.1M). Fleurs 한국어 CER **8.9%**  
-&gt; ¹¹ MeloTTS: 정확한 파라미터 수 미공개, 체크포인트 크기 ~200MB  
+&gt; ¹¹ Piper TTS: ONNX 기반 경량 TTS, 한국어 지원. 체크포인트 ~80MB  
 &gt; ¹² openWakeWord 공식 기준: **95%+**, 내부 테스트 시 98%+
 
 ### 4.2 보조 AI 모델 (2개)
@@ -112,10 +113,10 @@
 ### 4.3 로보틱스 알고리즘 (3개)
 
 | # | 역할 | 알고리즘 | 정확도 (목표) | VRAM | RAM | 전력 (목표) | 지연 (목표) |
-|:---:|:---|:---|:---|---:|---:|---:|---:|
+|:---:|:---|:---|:---|---:|---:|---:|---:|---:|
 | 9 | **SLAM** | `slam_toolbox` | 위치오차 ±5cm | 0.2GB | 1.0GB | 3W | 50ms |
 | 10 | **내비게이션** | `nav2` + `dwb_local_planner` | 경로성공률 95%+ | 0.1GB | 0.5GB | 1W | 20ms (50Hz) |
-| 11 | **역기구학** | `trac_ik` | 해결률 99.2% | 0GB | 0.1GB | 0.1W | &lt; 1ms |
+| 11 | **역기구학** | `trac_ik` (5-DOF) | 해결률 99.2% | 0GB | 0.1GB | 0.1W | &lt; 1ms |
 
 ---
 
@@ -142,7 +143,7 @@
 
 ```sql
 -- ============================================
--- JetRover Jarvis Database Schema (SQLite)
+-- JetRover rover Database Schema (SQLite)
 -- 버전: 3.0
 -- ============================================
 
@@ -160,13 +161,13 @@ CREATE TABLE conversations (
     execution_status TEXT CHECK(execution_status IN ('success', 'failed', 'pending')),
     execution_time_ms INTEGER,           -- 실행 소요 시간
     tts_response TEXT,                   -- TTS 생성 텍스트
-    embedding_vector BLOB,               -- KoSimCSE 임베딩 (384차원 float32)
-    
-    -- 인덱스
-    INDEX idx_timestamp (timestamp),
-    INDEX idx_session (session_id),
-    INDEX idx_intent (intent)
+    embedding_vector BLOB                -- KoSimCSE 임베딩 (384차원 float32)
 );
+
+-- conversations 테이블 인덱스
+CREATE INDEX idx_conv_timestamp ON conversations(timestamp);
+CREATE INDEX idx_conv_session ON conversations(session_id);
+CREATE INDEX idx_conv_intent ON conversations(intent);
 
 -- 2. 물체 지식 베이스 (Object Knowledge)
 CREATE TABLE objects (
@@ -270,3 +271,134 @@ CREATE TABLE embedding_cache (
     model_version TEXT,                    -- 'kosimcse-v1'
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+```
+
+---
+
+## 6. Docker 배포/운영 아키텍처
+
+### 6.1 Host-Brain 분리 구조
+
+| 영역 | 실행 환경 | 역할 | 장애 시 |
+|:---|:---|:---|:---|
+| **Host** | Ubuntu 22.04 (네이티브) | ROS2, Nav2, SLAM, 모터/서보 제어 | Brain 없이도 동작 유지 |
+| **Brain** | Docker Container (GPU) | AI 추론 (LLM, VLM, STT, TTS, YOLO, OCR) | Host가 자동 재시작 시도 |
+
+> **설계 원칙**: AI 컨테이너(Brain)가 OOM/크래시되어도 로봇 제어(Host)는 절대 멈추지 않는다.
+
+### 6.2 Docker Compose 구성
+
+```yaml
+services:
+  brain_always_on:
+    image: jetrover/brain:latest
+    runtime: nvidia
+    mem_limit: 2.2g
+    oom_score_adj: -500
+    cap_add: [SYS_RESOURCE]
+    volumes:
+      - /tmp:/tmp
+      - /data:/data
+    restart: unless-stopped
+
+  llm_runner:
+    image: jetrover/llm:latest
+    runtime: nvidia
+    mem_limit: 1.5g
+    oom_score_adj: 800          # OOM 시 가장 먼저 kill
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+
+  vlm_runner:
+    image: jetrover/vlm:latest
+    runtime: nvidia
+    mem_limit: 2.5g
+    oom_score_adj: 700          # OOM 시 두 번째로 kill
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - capabilities: [gpu]
+
+  host_bridge:
+    image: jetrover/host:latest
+    mem_limit: 512m
+    oom_score_adj: -1000        # 절대 kill 금지
+    privileged: true
+    restart: always
+```
+
+### 6.3 OOM Score 정책
+
+| Process | oom_score_adj | 우선순위 | OOM 시 동작 |
+|:---|---:|:---|:---|
+| host_bridge | -1000 | **ABSOLUTE** | 절대 kill 금지 |
+| ros_robot_controller | -1000 | **ABSOLUTE** | 절대 kill 금지 |
+| wake_detector | -300 | HIGH | 보호 |
+| vad_processor | -300 | HIGH | 보호 |
+| tts_server | -300 | HIGH | 보호 |
+| state_manager | -400 | HIGH | 보호 |
+| yolo_detector | -100 | MEDIUM | 보호 |
+| vlm_runner | 700 | **SACRIFICE** | 두 번째로 kill |
+| llm_runner | 800 | **SACRIFICE** | 가장 먼저 kill |
+
+### 6.4 시스템 실행 순서
+
+| # | 단계 | 명령 | 확인 |
+|:---:|:---|:---|:---|
+| 1 | Jetson 전원 ON | `sudo nvpmodel -m 2` | `nvpmodel -q` |
+| 2 | 팬 제어 | `echo 255 > /sys/.../target_pwm` | PWM 확인 |
+| 3 | ZRAM 설정 | `swapon /dev/zram0` | `swapon -s` |
+| 4 | Host 시작 | `ros2 launch host_bringup main.py` | `ros2 node list` |
+| 5 | Brain 시작 | `docker compose up -d` | `docker ps` |
+| 6 | Health Check | `curl localhost:8080/health` | `status: ok` |
+| 7 | YOLO 워밍업 | `ros2 service call /yolo/warmup` | success |
+
+### 6.5 Health Check 항목
+
+| 점검 항목 | 명령 | 기대값 |
+|:---|:---|:---|
+| Brain 생존 | `ros2 topic echo /heartbeat` | 1Hz 발행 |
+| 메모리 | `cat /proc/meminfo \| grep MemAvailable` | > 2.5GB |
+| GPU | `tegrastats \| head -1` | GR3D < 80% |
+| 온도 | `cat /sys/.../thermal_zone0/temp` | < 70°C |
+| YOLO FPS | `ros2 topic hz /vision/detections` | ~30Hz |
+| LLM 상태 | `curl localhost:8080/llm/status` | `status: ready` |
+
+### 6.6 장애 대응
+
+| 증상 | 원인 | 대응 |
+|:---|:---|:---|
+| 음성 무응답 | STT 실패 | `/audio/raw` 토픽 확인, 마이크 어레이 점검 |
+| Brain 재시작 반복 | OOM | MemAvailable 확인, llm_runner kill |
+| 네비게이션 멈춤 | Localization 손실 | `ros2 service call /reinitialize_global_localization` |
+| YOLO 출력 없음 | GPU 에러 | tegrastats 확인, yolo_detector 컨테이너 재시작 |
+| LLM 느려짐 | 발열 쓰로틀링 | 온도 확인, 전력 모드 축소, 팬 강화 |
+| Docker 실패 | 디스크 부족 | `docker system prune -a`, /var/lib/docker 확인 |
+
+### 6.7 업데이트/롤백 절차
+
+```bash
+# === 업데이트 ===
+docker compose pull
+docker compose up -d --no-deps brain_always_on
+curl localhost:8080/health          # 검증
+
+# === 롤백 (실패 시) ===
+docker compose down
+docker image tag jetrover/brain:previous jetrover/brain:latest
+docker compose up -d
+```
+
+### 6.8 로그 관리
+
+| 로그 종류 | 위치 | 보존 기간 |
+|:---|:---|:---|
+| Application | `/var/log/rover/app.log` | 7일 |
+| ROS2 | `~/.ros/log/` | 30일 |
+| Docker | `journalctl -u docker` | systemd 기본 |
+| GPU | `tegrastats` (실시간) | - |
+| Audit | `/var/log/rover/audit.log` | 90일 |

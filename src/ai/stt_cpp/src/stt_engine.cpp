@@ -23,6 +23,15 @@ static const rover_common::CurlGlobalGuard curl_guard;
 SttEngine::SttEngine(const SttConfig & config)
 : config_(config)
 {
+  if (config_.engine == "moonshine_onnx" || config_.engine == "auto") {
+    MoonshineConfig moonshine_cfg;
+    moonshine_cfg.encoder_path = config_.onnx_encoder_path;
+    moonshine_cfg.decoder_path = config_.onnx_decoder_path;
+    moonshine_cfg.use_cuda = config_.onnx_use_cuda;
+    moonshine_cfg.gpu_device_id = config_.onnx_gpu_device_id;
+    moonshine_cfg.intra_threads = config_.onnx_intra_threads;
+    moonshine_onnx_ = std::make_unique<MoonshineOnnx>(moonshine_cfg);
+  }
 }
 
 SttResult SttEngine::transcribe(const string & wav_path) const
@@ -32,11 +41,35 @@ SttResult SttEngine::transcribe(const string & wav_path) const
     result.error = "stt disabled";
     return result;
   }
-  if (config_.groq_api_key.empty()) {
-    result.error = "groq_api_key is empty";
-    return result;
+
+  if (config_.engine == "moonshine_onnx") {
+    return transcribe_moonshine_onnx(wav_path);
   }
-  return transcribe_groq(wav_path);
+  if (config_.engine == "groq") {
+    if (config_.groq_api_key.empty()) {
+      result.error = "groq_api_key is empty";
+      return result;
+    }
+    return transcribe_groq(wav_path);
+  }
+  if (config_.engine == "auto") {
+    SttResult local = transcribe_moonshine_onnx(wav_path);
+    if (local.ok) {
+      return local;
+    }
+    if (config_.groq_api_key.empty()) {
+      return local;
+    }
+    SttResult groq = transcribe_groq(wav_path);
+    groq.used_fallback = true;
+    if (!groq.ok && !local.error.empty()) {
+      groq.error = local.error + " | fallback=" + groq.error;
+    }
+    return groq;
+  }
+
+  result.error = "unknown stt engine: " + config_.engine;
+  return result;
 }
 
 SttResult SttEngine::transcribe_pcm(const vector<float> & samples, uint32_t sample_rate) const
@@ -54,8 +87,16 @@ SttResult SttEngine::transcribe_pcm(const vector<float> & samples, uint32_t samp
     out.error = "invalid_sample_rate";
     return out;
   }
-  if (config_.groq_api_key.empty()) {
-    out.error = "groq_api_key is empty";
+  if (config_.engine == "moonshine_onnx") {
+    return transcribe_moonshine_onnx_pcm(samples, sample_rate);
+  }
+  if (config_.engine == "groq") {
+    if (config_.groq_api_key.empty()) {
+      out.error = "groq_api_key is empty";
+      return out;
+    }
+  } else if (config_.engine != "auto") {
+    out.error = "unknown stt engine: " + config_.engine;
     return out;
   }
 
@@ -69,6 +110,51 @@ SttResult SttEngine::transcribe_pcm(const vector<float> & samples, uint32_t samp
   std::error_code ec;
   std::filesystem::remove(tmp_path, ec);
   return groq;
+}
+
+SttResult SttEngine::transcribe_moonshine_onnx(const std::string & wav_path) const
+{
+  SttResult out;
+  out.engine = "moonshine_onnx";
+  if (!moonshine_onnx_) {
+    out.error = "moonshine onnx engine is not initialized";
+    return out;
+  }
+  const std::string text = moonshine_onnx_->transcribe(wav_path);
+  if (text.empty()) {
+    out.error = moonshine_onnx_->last_error();
+    return out;
+  }
+  out.ok = true;
+  out.text = rover_common::trim(text);
+  if (out.text.empty()) {
+    out.ok = false;
+    out.error = "moonshine_onnx_empty_text";
+  }
+  return out;
+}
+
+SttResult SttEngine::transcribe_moonshine_onnx_pcm(
+  const std::vector<float> & samples, uint32_t sample_rate) const
+{
+  SttResult out;
+  out.engine = "moonshine_onnx";
+  if (!moonshine_onnx_) {
+    out.error = "moonshine onnx engine is not initialized";
+    return out;
+  }
+  const std::string text = moonshine_onnx_->transcribe_pcm(samples, sample_rate);
+  if (text.empty()) {
+    out.error = moonshine_onnx_->last_error();
+    return out;
+  }
+  out.ok = true;
+  out.text = rover_common::trim(text);
+  if (out.text.empty()) {
+    out.ok = false;
+    out.error = "moonshine_onnx_empty_text";
+  }
+  return out;
 }
 
 SttResult SttEngine::transcribe_groq(const string & wav_path) const

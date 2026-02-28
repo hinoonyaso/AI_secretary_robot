@@ -1,0 +1,15 @@
+wheel_encoder_node:
+  ros__parameters:
+    input_motor_topic: /ros_robot_controller/set_motor
+    ticks_topic: /wheel_encoder/ticks
+    velocity_topic: /wheel_encoder/velocity_rps
+    joint_state_topic: /wheel_encoder/joint_states
+    motor_ids: [1, 2, 3, 4]
+    joint_names:
+      - wheel_left_front_joint
+      - wheel_left_back_joint
+      - wheel_right_front_joint
+      - wheel_right_back_joint
+    ticks_per_revolution: 2048.0
+    publish_rate_hz: 50.0
+    stale_timeout_sec: 0.5

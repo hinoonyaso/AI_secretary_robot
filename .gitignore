@@ -19,6 +19,10 @@ venv/
 .env.*
 *.sqlite
 *.db
+*.db-wal
+*.db-shm
+*.sqlite-wal
+*.sqlite-shm
 
 # Node / frontend
 node_modules/

@@ -26,8 +26,8 @@ public:
 
     declare_parameter<double>("forward_rps", 2.0);
     declare_parameter<double>("turn_rps", 1.6);
-    declare_parameter<vector<int64_t>>("left_motor_ids", {1, 3});
-    declare_parameter<vector<int64_t>>("right_motor_ids", {2, 4});
+    declare_parameter<vector<int64_t>>("left_motor_ids", {1, 2});   // left_front + left_back
+    declare_parameter<vector<int64_t>>("right_motor_ids", {3, 4});  // right_front + right_back
     declare_parameter<double>("left_forward_sign", 1.0);
     declare_parameter<double>("right_forward_sign", 1.0);
 
