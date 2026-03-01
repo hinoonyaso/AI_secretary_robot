@@ -38,12 +38,12 @@ WakeVadNode::WakeVadNode()
 
   processing_thread_ = thread(&WakeVadNode::processing_loop, this);
 
-  audio_input_.configure(audio_device_index_, 16000, 1, 512);
   audio_input_.set_callback(
     bind(&WakeVadNode::on_audio_frame, this, placeholders::_1));
-  if (!audio_input_.start()) {
-    RCLCPP_ERROR(get_logger(), "failed to start audio input stream");
-  }
+  start_audio_input_with_fallback();
+
+  parameter_cb_handle_ = add_on_set_parameters_callback(
+    bind(&WakeVadNode::on_set_parameters, this, placeholders::_1));
 
   publish_state();
   RCLCPP_INFO(get_logger(), "wake_vad_cpp node started");
@@ -66,6 +66,8 @@ void WakeVadNode::declare_and_get_parameters()
   declare_parameter<string>("keyword_path", "");
   declare_parameter<string>("porcupine_model_path", "");
   declare_parameter<int>("audio_device_index", -1);
+  declare_parameter<string>("mic_type", "mic6_circle");
+  declare_parameter<string>("audio_device_hint", "");
   declare_parameter<double>("sensitivity", 0.5);
   declare_parameter<double>("vad_threshold", 0.5);
   declare_parameter<double>("silence_duration", 1.5);
@@ -80,11 +82,14 @@ void WakeVadNode::declare_and_get_parameters()
   declare_parameter<double>("wake_prompt_wait_timeout_sec", 4.0);
   declare_parameter<string>("tts_playback_done_topic", "/tts/playback_done");
   declare_parameter<bool>("save_wav_for_debug", false);
+  declare_parameter<string>("wake_keyword", "");
 
   access_key_ = get_parameter("access_key").as_string();
-  keyword_path_ = get_parameter("keyword_path").as_string();
+  keyword_dir_path_ = get_parameter("keyword_path").as_string();
   porcupine_model_path_ = get_parameter("porcupine_model_path").as_string();
   audio_device_index_ = get_parameter("audio_device_index").as_int();
+  mic_type_ = get_parameter("mic_type").as_string();
+  audio_device_hint_ = get_parameter("audio_device_hint").as_string();
   sensitivity_ = get_parameter("sensitivity").as_double();
   vad_threshold_ = get_parameter("vad_threshold").as_double();
   silence_duration_ = get_parameter("silence_duration").as_double();
@@ -99,6 +104,7 @@ void WakeVadNode::declare_and_get_parameters()
   wake_prompt_wait_timeout_sec_ = get_parameter("wake_prompt_wait_timeout_sec").as_double();
   tts_playback_done_topic_ = get_parameter("tts_playback_done_topic").as_string();
   save_wav_for_debug_ = get_parameter("save_wav_for_debug").as_bool();
+  wake_keyword_ = get_parameter("wake_keyword").as_string();
 
   // 파라미터에 키가 없으면 환경변수에서 가져옴
   if (access_key_.empty()) {
@@ -108,8 +114,206 @@ void WakeVadNode::declare_and_get_parameters()
     }
   }
 
-  keyword_path_ = resolve_keyword_path(keyword_path_);
+  keyword_path_ = resolve_keyword_path(keyword_dir_path_);
+  if (!wake_keyword_.empty()) {
+    const string from_keyword = resolve_keyword_by_name(keyword_dir_path_, wake_keyword_);
+    if (!from_keyword.empty()) {
+      keyword_path_ = from_keyword;
+    } else {
+      RCLCPP_WARN(
+        get_logger(),
+        "wake_keyword '%s' not found in %s. keep keyword_path=%s",
+        wake_keyword_.c_str(), keyword_dir_path_.c_str(), keyword_path_.c_str());
+    }
+  }
   porcupine_model_path_ = resolve_model_path(porcupine_model_path_);
+}
+
+vector<string> WakeVadNode::keywords_from_mic_type(const string & mic_type) const
+{
+  const string value = mic_type;
+  if (value == "mic4") {
+    return {"mic4", "respeaker", "usb"};
+  }
+  if (value == "mic6") {
+    return {"mic6", "xfm", "usb"};
+  }
+  if (value == "mic6_circle") {
+    return {"xfm-dp", "xfmdp", "xfm", "ring", "usb"};
+  }
+  return {"xfm-dp", "xfmdp", "xfm", "usb"};
+}
+
+bool WakeVadNode::start_audio_input_with_fallback()
+{
+  vector<string> keywords = keywords_from_mic_type(mic_type_);
+  if (!audio_device_hint_.empty()) {
+    keywords.insert(keywords.begin(), audio_device_hint_);
+  }
+  audio_input_.set_preferred_device_keywords(keywords);
+  audio_input_.configure(audio_device_index_, 16000, 1, 512);
+  if (audio_input_.start()) {
+    RCLCPP_INFO(
+      get_logger(), "audio input started: index=%d name=%s",
+      audio_input_.selected_device_index(),
+      audio_input_.selected_device_name().c_str());
+    return true;
+  }
+
+  const string first_err = audio_input_.last_error();
+  if (audio_device_index_ >= 0) {
+    RCLCPP_WARN(
+      get_logger(), "audio start failed(index=%d): %s. retrying with auto fallback",
+      audio_device_index_, first_err.c_str());
+    audio_input_.stop();
+    audio_input_.configure(-1, 16000, 1, 512);
+    if (audio_input_.start()) {
+      RCLCPP_INFO(
+        get_logger(), "audio input fallback started: index=%d name=%s",
+        audio_input_.selected_device_index(),
+        audio_input_.selected_device_name().c_str());
+      return true;
+    }
+  }
+
+  RCLCPP_ERROR(
+    get_logger(), "failed to start audio input stream: %s",
+    audio_input_.last_error().c_str());
+  return false;
+}
+
+string WakeVadNode::resolve_keyword_by_name(const string & keyword_dir, const string & wake_keyword) const
+{
+  if (keyword_dir.empty() || wake_keyword.empty()) {
+    return "";
+  }
+  error_code ec;
+  if (!filesystem::is_directory(keyword_dir, ec)) {
+    return "";
+  }
+
+  vector<string> candidates;
+  for (const auto & entry : filesystem::directory_iterator(keyword_dir, ec)) {
+    if (!entry.is_regular_file()) {
+      continue;
+    }
+    const filesystem::path path = entry.path();
+    if (path.extension() != ".ppn") {
+      continue;
+    }
+    const string stem = path.stem().string();
+    if (stem == wake_keyword || path.filename().string() == wake_keyword) {
+      return path.string();
+    }
+    if (stem.find(wake_keyword) != string::npos || path.filename().string().find(wake_keyword) != string::npos) {
+      candidates.push_back(path.string());
+    }
+  }
+  sort(candidates.begin(), candidates.end());
+  if (!candidates.empty()) {
+    return candidates.front();
+  }
+  return "";
+}
+
+bool WakeVadNode::update_keyword_runtime(const string & keyword_path, const string & wake_keyword)
+{
+  string resolved = resolve_keyword_path(keyword_path);
+  if (!wake_keyword.empty()) {
+    const string by_name = resolve_keyword_by_name(keyword_path, wake_keyword);
+    if (!by_name.empty()) {
+      resolved = by_name;
+    }
+  }
+  if (resolved.empty()) {
+    return false;
+  }
+
+  porcupine_.shutdown();
+  const bool ok = porcupine_.initialize(
+    access_key_, resolved, porcupine_model_path_, static_cast<float>(sensitivity_));
+  if (ok) {
+    keyword_dir_path_ = keyword_path;
+    keyword_path_ = resolved;
+    wake_keyword_ = wake_keyword;
+  }
+  return ok;
+}
+
+rcl_interfaces::msg::SetParametersResult WakeVadNode::on_set_parameters(
+  const vector<rclcpp::Parameter> & parameters)
+{
+  auto result = rcl_interfaces::msg::SetParametersResult();
+  result.successful = true;
+  result.reason = "ok";
+
+  int new_audio_device_index = audio_device_index_;
+  string new_mic_type = mic_type_;
+  string new_audio_hint = audio_device_hint_;
+  string new_keyword_path = keyword_dir_path_;
+  string new_wake_keyword = wake_keyword_;
+  double new_sensitivity = sensitivity_;
+  bool audio_config_changed = false;
+  bool wakeword_changed = false;
+
+  for (const auto & p : parameters) {
+    if (p.get_name() == "audio_device_index" && p.get_type() == rclcpp::ParameterType::PARAMETER_INTEGER) {
+      new_audio_device_index = static_cast<int>(p.as_int());
+      audio_config_changed = true;
+    } else if (p.get_name() == "mic_type" && p.get_type() == rclcpp::ParameterType::PARAMETER_STRING) {
+      new_mic_type = p.as_string();
+      audio_config_changed = true;
+    } else if (p.get_name() == "audio_device_hint" && p.get_type() == rclcpp::ParameterType::PARAMETER_STRING) {
+      new_audio_hint = p.as_string();
+      audio_config_changed = true;
+    } else if (p.get_name() == "keyword_path" && p.get_type() == rclcpp::ParameterType::PARAMETER_STRING) {
+      new_keyword_path = p.as_string();
+      wakeword_changed = true;
+    } else if (p.get_name() == "wake_keyword" && p.get_type() == rclcpp::ParameterType::PARAMETER_STRING) {
+      new_wake_keyword = p.as_string();
+      wakeword_changed = true;
+    } else if (p.get_name() == "sensitivity" &&
+      (p.get_type() == rclcpp::ParameterType::PARAMETER_DOUBLE ||
+      p.get_type() == rclcpp::ParameterType::PARAMETER_INTEGER))
+    {
+      new_sensitivity = (p.get_type() == rclcpp::ParameterType::PARAMETER_DOUBLE) ?
+        p.as_double() : static_cast<double>(p.as_int());
+      wakeword_changed = true;
+    } else if (p.get_name() == "max_record_duration" && p.get_type() == rclcpp::ParameterType::PARAMETER_DOUBLE) {
+      max_record_duration_ = p.as_double();
+    } else if (p.get_name() == "vad_threshold" && p.get_type() == rclcpp::ParameterType::PARAMETER_DOUBLE) {
+      vad_threshold_ = p.as_double();
+      vad_.initialize(static_cast<float>(vad_threshold_), vad_model_path_);
+    }
+  }
+
+  if (wakeword_changed) {
+    const double prev_sensitivity = sensitivity_;
+    sensitivity_ = new_sensitivity;
+    if (!update_keyword_runtime(new_keyword_path, new_wake_keyword)) {
+      sensitivity_ = prev_sensitivity;
+      result.successful = false;
+      result.reason = "failed_to_reload_wake_keyword";
+      return result;
+    }
+    RCLCPP_INFO(
+      get_logger(), "wake keyword updated: keyword=%s path=%s sensitivity=%.2f",
+      wake_keyword_.c_str(), keyword_path_.c_str(), sensitivity_);
+  }
+
+  if (audio_config_changed) {
+    audio_device_index_ = new_audio_device_index;
+    mic_type_ = new_mic_type;
+    audio_device_hint_ = new_audio_hint;
+    audio_input_.stop();
+    if (!start_audio_input_with_fallback()) {
+      result.successful = false;
+      result.reason = "failed_to_restart_audio_input";
+      return result;
+    }
+  }
+
+  return result;
 }
 
 /// keyword_path가 파일이면 그대로, 디렉토리면 .ppn 파일을 자동 탐색

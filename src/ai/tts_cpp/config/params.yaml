@@ -7,15 +7,17 @@ tts_node:
     output_playback_done_topic: "/tts/playback_done"
     auto_play: true
     playback_command: ""
-    alsa_device: "default"
+    alsa_device: "plughw:1,0"
+    alsa_fallback_devices: ["plughw:1,0", "plughw:CARD=Device,DEV=0", "default"]
 
     tts_enabled: true
-    output_dir: "/home/ubuntu/rover_ws/src/tts_cpp/output"
+    output_dir: "/home/sang/dev_ws/AI_secretary_robot/src/ai/tts_cpp/output"
 
     # "auto" = edge → piper → espeak
     # "piper" = piper → espeak (offline)
     # "espeak" = espeak only
-    tts_engine: "auto"
+    # NOTE(2026-03-01): 현재 기본 Piper 모델 메타데이터 호환성 이슈로 기본값은 안정 기동 우선(espeak)
+    tts_engine: "espeak"
 
     # Edge TTS (cloud)
     edge_script_path: ""
@@ -25,8 +27,11 @@ tts_node:
 
     # Piper TTS (local ONNX)
     piper_executable: "piper"
-    piper_model_path: ""
-    piper_config_path: ""
+    piper_model_path: "/home/sang/dev_ws/AI_secretary_robot/models/tts/neurlang_piper_onnx_kss_korean/piper-kss-korean.onnx"
+    piper_config_path: "/home/sang/dev_ws/AI_secretary_robot/models/tts/neurlang_piper_onnx_kss_korean/piper-kss-korean.onnx.json"
+    piper_data_dir: "/usr/lib/aarch64-linux-gnu/espeak-ng-data"
+    piper_lexicon_path: ""
+    piper_tokens_path: "/home/sang/dev_ws/AI_secretary_robot/models/tts/neurlang_piper_onnx_kss_korean/tokens.txt"
     piper_speaker: ""
 
     # espeak-ng (fallback)

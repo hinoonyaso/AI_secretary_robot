@@ -14,6 +14,7 @@ find_package(CURL REQUIRED)
 add_executable(llm_node
   src/llm_node.cpp
   src/llm_engine.cpp
+  src/llama_server_manager.cpp
 )
 
 target_include_directories(llm_node PUBLIC

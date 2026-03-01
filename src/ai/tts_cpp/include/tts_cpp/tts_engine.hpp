@@ -1,6 +1,9 @@
 #pragma once
 
+#include "tts_cpp/piper_onnx.hpp"
+
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -22,6 +25,9 @@ struct TtsConfig
   std::string piper_executable = "piper";
   std::string piper_model_path;
   std::string piper_config_path;
+  std::string piper_data_dir;
+  std::string piper_lexicon_path;
+  std::string piper_tokens_path;
   std::string piper_speaker = "";
 
   std::string espeak_executable = "espeak-ng";
@@ -53,8 +59,14 @@ private:
   TtsResult synthesize_piper(const std::string & text, const std::string & out_path) const;
   TtsResult synthesize_espeak(const std::string & text, const std::string & out_path) const;
   std::string make_output_path(const std::string & extension) const;
+  bool write_pcm_to_wav(
+    const std::string & path,
+    const std::vector<int16_t> & samples,
+    uint32_t sample_rate) const;
+  static int16_t float_to_pcm16(float sample);
 
   TtsConfig config_;
+  std::unique_ptr<PiperOnnx> piper_onnx_;
 };
 
 }  // namespace tts_cpp

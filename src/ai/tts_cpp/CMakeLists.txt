@@ -13,11 +13,13 @@ find_package(rclcpp REQUIRED)
 find_package(rover_common REQUIRED)
 find_package(std_msgs REQUIRED)
 pkg_check_modules(ALSA alsa)
+pkg_check_modules(SHERPA_ONNX REQUIRED sherpa-onnx)
 
 add_executable(tts_node
   src/tts_node.cpp
   src/tts_engine.cpp
   src/alsa_player.cpp
+  src/piper_onnx.cpp
 )
 
 target_include_directories(tts_node PUBLIC
@@ -39,6 +41,14 @@ if(ALSA_FOUND)
   target_include_directories(tts_node PRIVATE ${ALSA_INCLUDE_DIRS})
   target_link_libraries(tts_node ${ALSA_LIBRARIES})
 endif()
+
+target_include_directories(tts_node PRIVATE ${SHERPA_ONNX_INCLUDE_DIRS})
+target_link_directories(tts_node PRIVATE ${SHERPA_ONNX_LIBRARY_DIRS})
+target_link_libraries(tts_node ${SHERPA_ONNX_LIBRARIES})
+set_target_properties(tts_node PROPERTIES
+  BUILD_RPATH "${SHERPA_ONNX_LIBRARY_DIRS}"
+  INSTALL_RPATH "${SHERPA_ONNX_LIBRARY_DIRS}"
+)
 
 install(TARGETS
   tts_node

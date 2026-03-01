@@ -8,12 +8,15 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(ament_index_cpp REQUIRED)
 find_package(CURL REQUIRED)
+find_package(PkgConfig REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(ros_robot_controller_msgs REQUIRED)
 find_package(rover_common REQUIRED)
 find_package(std_msgs REQUIRED)
+pkg_check_modules(SHERPA_ONNX REQUIRED sherpa-onnx)
 
 add_executable(stt_node
+  src/moonshine_onnx.cpp
   src/stt_node.cpp
   src/stt_engine.cpp
 )
@@ -31,12 +34,19 @@ ament_target_dependencies(stt_node
   rover_common
   std_msgs
 )
+target_include_directories(stt_node PRIVATE ${SHERPA_ONNX_INCLUDE_DIRS})
+target_link_directories(stt_node PRIVATE ${SHERPA_ONNX_LIBRARY_DIRS})
+set_target_properties(stt_node PROPERTIES
+  BUILD_RPATH "${SHERPA_ONNX_LIBRARY_DIRS}"
+  INSTALL_RPATH "${SHERPA_ONNX_LIBRARY_DIRS}"
+)
 
 if(TARGET CURL::libcurl)
   target_link_libraries(stt_node CURL::libcurl)
 else()
   target_link_libraries(stt_node ${CURL_LIBRARIES})
 endif()
+target_link_libraries(stt_node ${SHERPA_ONNX_LIBRARIES})
 
 install(TARGETS
   stt_node

@@ -6,13 +6,9 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
-#include <regex>
 #include <sstream>
-#include <stdexcept>
 #include <string>
 #include <vector>
-
-#include "rclcpp/rclcpp.hpp"
 
 #ifdef STT_CPP_USE_SNDFILE
 #include <sndfile.h>
@@ -23,122 +19,7 @@ namespace stt_cpp
 namespace
 {
 
-constexpr const char * kVocabJsonPath = "/home/ubuntu/models/moonshine/vocab.json";
-constexpr const char * kSpmSpaceMarker = "\xE2\x96\x81";  // U+2581
-
-std::string trim_copy(const std::string & s)
-{
-  const auto begin = s.find_first_not_of(" \t\r\n");
-  if (begin == std::string::npos) {
-    return {};
-  }
-  const auto end = s.find_last_not_of(" \t\r\n");
-  return s.substr(begin, end - begin + 1);
-}
-
-void append_utf8_from_codepoint(uint32_t cp, std::string & out)
-{
-  if (cp <= 0x7FU) {
-    out.push_back(static_cast<char>(cp));
-  } else if (cp <= 0x7FFU) {
-    out.push_back(static_cast<char>(0xC0U | (cp >> 6U)));
-    out.push_back(static_cast<char>(0x80U | (cp & 0x3FU)));
-  } else if (cp <= 0xFFFFU) {
-    out.push_back(static_cast<char>(0xE0U | (cp >> 12U)));
-    out.push_back(static_cast<char>(0x80U | ((cp >> 6U) & 0x3FU)));
-    out.push_back(static_cast<char>(0x80U | (cp & 0x3FU)));
-  } else {
-    out.push_back(static_cast<char>(0xF0U | (cp >> 18U)));
-    out.push_back(static_cast<char>(0x80U | ((cp >> 12U) & 0x3FU)));
-    out.push_back(static_cast<char>(0x80U | ((cp >> 6U) & 0x3FU)));
-    out.push_back(static_cast<char>(0x80U | (cp & 0x3FU)));
-  }
-}
-
-int hex_to_int(char c)
-{
-  if (c >= '0' && c <= '9') {
-    return c - '0';
-  }
-  if (c >= 'a' && c <= 'f') {
-    return 10 + (c - 'a');
-  }
-  if (c >= 'A' && c <= 'F') {
-    return 10 + (c - 'A');
-  }
-  return -1;
-}
-
-std::string json_unescape(const std::string & s)
-{
-  std::string out;
-  out.reserve(s.size());
-  for (size_t i = 0; i < s.size(); ++i) {
-    if (s[i] != '\\') {
-      out.push_back(s[i]);
-      continue;
-    }
-    if (i + 1 >= s.size()) {
-      break;
-    }
-    const char esc = s[++i];
-    switch (esc) {
-      case '"':
-      case '\\':
-      case '/':
-        out.push_back(esc);
-        break;
-      case 'b':
-        out.push_back('\b');
-        break;
-      case 'f':
-        out.push_back('\f');
-        break;
-      case 'n':
-        out.push_back('\n');
-        break;
-      case 'r':
-        out.push_back('\r');
-        break;
-      case 't':
-        out.push_back('\t');
-        break;
-      case 'u': {
-        if (i + 4 >= s.size()) {
-          break;
-        }
-        int d0 = hex_to_int(s[i + 1]);
-        int d1 = hex_to_int(s[i + 2]);
-        int d2 = hex_to_int(s[i + 3]);
-        int d3 = hex_to_int(s[i + 4]);
-        if (d0 < 0 || d1 < 0 || d2 < 0 || d3 < 0) {
-          i += 4;
-          break;
-        }
-        uint32_t cp = static_cast<uint32_t>((d0 << 12) | (d1 << 8) | (d2 << 4) | d3);
-        append_utf8_from_codepoint(cp, out);
-        i += 4;
-        break;
-      }
-      default:
-        out.push_back(esc);
-        break;
-    }
-  }
-  return out;
-}
-
-void replace_all(std::string & s, const std::string & from, const std::string & to)
-{
-  if (from.empty()) {
-    return;
-  }
-  size_t pos = 0;
-  while ((pos = s.find(from, pos)) != std::string::npos) {
-    s.replace(pos, from.size(), to);
-    pos += to.size();
-  }
-}
+constexpr const char * kDefaultVocabJsonPath = "/home/ubuntu/models/moonshine/vocab.json";
 
 uint16_t read_le_u16(const uint8_t * p)
 {
@@ -183,9 +64,7 @@ std::vector<float> resample_linear(
 }  // namespace
 
 MoonshineOnnx::MoonshineOnnx(const MoonshineConfig & cfg)
-: env_(ORT_LOGGING_LEVEL_WARNING, "moonshine")
 {
-  auto logger = rclcpp::get_logger("moonshine_onnx");
   last_error_.clear();
   ready_ = false;
 
@@ -202,34 +81,42 @@ MoonshineOnnx::MoonshineOnnx(const MoonshineConfig & cfg)
     return;
   }
 
-  enc_opts_.SetIntraOpNumThreads(std::max(1, cfg.intra_threads));
-  dec_opts_.SetIntraOpNumThreads(std::max(1, cfg.intra_threads));
-  enc_opts_.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
-  dec_opts_.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+  model_dir_ = std::filesystem::path(cfg.encoder_path).parent_path().string();
+  encoder_path_ = cfg.encoder_path;
+  decoder_path_ = cfg.decoder_path;
+  tokens_path_ = resolve_tokens_path(cfg);
+  provider_ = cfg.use_cuda ? "cuda" : "cpu";
 
-  if (cfg.use_cuda) {
-    try {
-      OrtCUDAProviderOptions cuda_options{};
-      cuda_options.device_id = cfg.gpu_device_id;
-      enc_opts_.AppendExecutionProvider_CUDA(cuda_options);
-      dec_opts_.AppendExecutionProvider_CUDA(cuda_options);
-    } catch (const Ort::Exception & e) {
-      RCLCPP_WARN(
-        logger,
-        "CUDA EP unavailable, using CPU: %s",
-        e.what());
-    }
+  if (tokens_path_.empty()) {
+    last_error_ = "vocab json not found";
+    return;
   }
 
-  try {
-    encoder_session_ = std::make_unique<Ort::Session>(env_, cfg.encoder_path.c_str(), enc_opts_);
-    decoder_session_ = std::make_unique<Ort::Session>(env_, cfg.decoder_path.c_str(), dec_opts_);
-    ready_ = true;
-  } catch (const Ort::Exception & e) {
-    last_error_ = std::string("onnx session init failed: ") + e.what();
-    encoder_session_.reset();
-    decoder_session_.reset();
-    ready_ = false;
+  SherpaOnnxOnlineRecognizerConfig config;
+  std::memset(&config, 0, sizeof(config));
+
+  config.model_config.transducer.encoder = encoder_path_.c_str();
+  config.model_config.transducer.decoder = decoder_path_.c_str();
+  config.model_config.transducer.joiner = "";
+  config.model_config.tokens = tokens_path_.c_str();
+  config.model_config.num_threads = std::max(1, cfg.intra_threads);
+  config.model_config.provider = provider_.c_str();
+  config.model_config.debug = 0;
+
+  recognizer_ = SherpaOnnxCreateOnlineRecognizer(&config);
+  if (recognizer_ == nullptr) {
+    last_error_ = "failed to create sherpa-onnx recognizer";
+    return;
+  }
+
+  ready_ = true;
+}
+
+MoonshineOnnx::~MoonshineOnnx()
+{
+  if (recognizer_ != nullptr) {
+    SherpaOnnxDestroyOnlineRecognizer(recognizer_);
+    recognizer_ = nullptr;
   }
 }
 
@@ -237,7 +124,7 @@ std::string MoonshineOnnx::transcribe(const std::string & wav_path) const
 {
   last_error_.clear();
 
-  if (!ready_ || !encoder_session_ || !decoder_session_) {
+  if (!ready_ || recognizer_ == nullptr) {
     last_error_ = "moonshine onnx is not ready";
     return {};
   }
@@ -259,7 +146,7 @@ std::string MoonshineOnnx::transcribe_pcm(
 {
   last_error_.clear();
 
-  if (!ready_ || !encoder_session_ || !decoder_session_) {
+  if (!ready_ || recognizer_ == nullptr) {
     last_error_ = "moonshine onnx is not ready";
     return {};
   }
@@ -279,24 +166,39 @@ std::string MoonshineOnnx::transcribe_pcm(
     return {};
   }
 
-  std::vector<int64_t> enc_shape;
-  const auto enc_hidden = run_encoder(pcm, enc_shape);
-  if (enc_hidden.empty()) {
-    if (last_error_.empty()) {
-      last_error_ = "encoder output is empty";
-    }
+  const SherpaOnnxOnlineStream * stream = SherpaOnnxCreateOnlineStream(recognizer_);
+  if (stream == nullptr) {
+    last_error_ = "failed to create online stream";
     return {};
   }
 
-  const auto token_ids = run_decoder_greedy(enc_hidden, enc_shape);
-  if (token_ids.empty()) {
-    if (last_error_.empty()) {
-      last_error_ = "decoder produced no tokens";
-    }
-    return {};
+  SherpaOnnxOnlineStreamAcceptWaveform(
+    stream,
+    static_cast<int32_t>(kSampleRate),
+    pcm.data(),
+    static_cast<int32_t>(pcm.size()));
+  SherpaOnnxOnlineStreamInputFinished(stream);
+
+  while (SherpaOnnxIsOnlineStreamReady(recognizer_, stream)) {
+    SherpaOnnxDecodeOnlineStream(recognizer_, stream);
   }
 
-  return tokens_to_text(token_ids);
+  const SherpaOnnxOnlineRecognizerResult * result =
+    SherpaOnnxGetOnlineStreamResult(recognizer_, stream);
+
+  std::string text;
+  if (result != nullptr && result->text != nullptr) {
+    text = result->text;
+  }
+
+  SherpaOnnxDestroyOnlineRecognizerResult(result);
+  SherpaOnnxDestroyOnlineStream(stream);
+
+  if (text.empty()) {
+    last_error_ = "empty transcription result";
+  }
+
+  return text;
 }
 
 std::vector<float> MoonshineOnnx::load_audio_pcm(const std::string & wav_path) const
@@ -469,251 +371,26 @@ std::vector<float> MoonshineOnnx::load_audio_pcm(const std::string & wav_path) c
   return pcm;
 }
 
-std::vector<float> MoonshineOnnx::run_encoder(
-  const std::vector<float> & pcm,
-  std::vector<int64_t> & hidden_shape) const
+std::string MoonshineOnnx::resolve_tokens_path(const MoonshineConfig & cfg) const
 {
-  last_error_.clear();
-  hidden_shape.clear();
-
-  if (!encoder_session_) {
-    last_error_ = "encoder session is null";
-    return {};
-  }
-  if (pcm.empty()) {
-    last_error_ = "encoder input pcm is empty";
-    return {};
+  if (std::filesystem::is_regular_file(kDefaultVocabJsonPath)) {
+    return kDefaultVocabJsonPath;
   }
 
-  std::array<int64_t, 2> input_shape{
-    1,
-    static_cast<int64_t>(pcm.size())
-  };
+  const auto decoder_dir = std::filesystem::path(cfg.decoder_path).parent_path();
+  const auto encoder_dir = std::filesystem::path(cfg.encoder_path).parent_path();
 
-  Ort::MemoryInfo mem_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeCPU);
-  Ort::Value input_tensor = Ort::Value::CreateTensor<float>(
-    mem_info,
-    const_cast<float *>(pcm.data()),
-    pcm.size(),
-    input_shape.data(),
-    input_shape.size());
-
-  const std::array<const char *, 1> input_names{"input_values"};
-  const std::array<const char *, 1> output_names{"encoder_hidden_states"};
-
-  try {
-    auto outputs = encoder_session_->Run(
-      Ort::RunOptions{nullptr},
-      input_names.data(),
-      &input_tensor,
-      1,
-      output_names.data(),
-      1);
-
-    if (outputs.empty() || !outputs[0].IsTensor()) {
-      last_error_ = "encoder output is not a tensor";
-      return {};
-    }
-
-    auto type_info = outputs[0].GetTensorTypeAndShapeInfo();
-    hidden_shape = type_info.GetShape();
-    size_t total = 1;
-    for (int64_t d : hidden_shape) {
-      if (d <= 0) {
-        last_error_ = "encoder output has invalid dynamic shape";
-        return {};
-      }
-      total *= static_cast<size_t>(d);
-    }
-
-    const float * ptr = outputs[0].GetTensorData<float>();
-    return std::vector<float>(ptr, ptr + total);
-  } catch (const Ort::Exception & e) {
-    last_error_ = std::string("encoder inference failed: ") + e.what();
-    return {};
-  }
-}
-
-std::vector<int64_t> MoonshineOnnx::run_decoder_greedy(
-  const std::vector<float> & enc_hidden,
-  const std::vector<int64_t> & enc_shape) const
-{
-  last_error_.clear();
-
-  if (!decoder_session_) {
-    last_error_ = "decoder session is null";
-    return {};
-  }
-  if (enc_hidden.empty() || enc_shape.size() != 3) {
-    last_error_ = "encoder hidden state shape must be [1, seq_len, hidden_dim]";
-    return {};
+  const auto decoder_vocab = decoder_dir / "vocab.json";
+  if (std::filesystem::is_regular_file(decoder_vocab)) {
+    return decoder_vocab.string();
   }
 
-  const std::array<const char *, 2> input_names{"input_ids", "encoder_hidden_states"};
-  const std::array<const char *, 1> output_names{"logits"};
-
-  Ort::MemoryInfo mem_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeCPU);
-  std::vector<int64_t> token_ids;
-  token_ids.reserve(static_cast<size_t>(kMaxDecodeSteps) + 1U);
-  token_ids.push_back(kBosTokenId);
-
-  for (int64_t step = 0; step < kMaxDecodeSteps; ++step) {
-    const std::array<int64_t, 2> ids_shape{
-      1,
-      static_cast<int64_t>(token_ids.size())
-    };
-
-    Ort::Value ids_tensor = Ort::Value::CreateTensor<int64_t>(
-      mem_info,
-      token_ids.data(),
-      token_ids.size(),
-      ids_shape.data(),
-      ids_shape.size());
-
-    Ort::Value enc_tensor = Ort::Value::CreateTensor<float>(
-      mem_info,
-      const_cast<float *>(enc_hidden.data()),
-      enc_hidden.size(),
-      enc_shape.data(),
-      enc_shape.size());
-
-    std::array<Ort::Value, 2> inputs = {std::move(ids_tensor), std::move(enc_tensor)};
-
-    std::vector<Ort::Value> outputs;
-    try {
-      outputs = decoder_session_->Run(
-        Ort::RunOptions{nullptr},
-        input_names.data(),
-        inputs.data(),
-        inputs.size(),
-        output_names.data(),
-        output_names.size());
-    } catch (const Ort::Exception & e) {
-      last_error_ = std::string("decoder inference failed: ") + e.what();
-      return {};
-    }
-
-    if (outputs.empty() || !outputs[0].IsTensor()) {
-      last_error_ = "decoder output is not a tensor";
-      return {};
-    }
-
-    auto logits_info = outputs[0].GetTensorTypeAndShapeInfo();
-    const auto logits_shape = logits_info.GetShape();
-    if (logits_shape.size() != 3 || logits_shape[0] != 1 || logits_shape[1] <= 0 || logits_shape[2] <= 0) {
-      last_error_ = "decoder logits shape is invalid";
-      return {};
-    }
-
-    const size_t seq_len = static_cast<size_t>(logits_shape[1]);
-    const size_t vocab_size = static_cast<size_t>(logits_shape[2]);
-    const float * logits = outputs[0].GetTensorData<float>();
-    const size_t offset = (seq_len - 1U) * vocab_size;
-
-    const auto * begin = logits + offset;
-    const auto * end = begin + vocab_size;
-    const auto * max_it = std::max_element(begin, end);
-    const int64_t next_id = static_cast<int64_t>(std::distance(begin, max_it));
-
-    token_ids.push_back(next_id);
-    if (next_id == kEosTokenId) {
-      break;
-    }
+  const auto encoder_vocab = encoder_dir / "vocab.json";
+  if (std::filesystem::is_regular_file(encoder_vocab)) {
+    return encoder_vocab.string();
   }
 
-  return token_ids;
-}
-
-std::string MoonshineOnnx::tokens_to_text(const std::vector<int64_t> & token_ids) const
-{
-  last_error_.clear();
-
-  if (!vocab_loaded_) {
-    vocab_loaded_ = true;
-    vocab_id_to_piece_.clear();
-
-    std::ifstream ifs(kVocabJsonPath);
-    if (!ifs) {
-      last_error_ = std::string("failed to open vocab json: ") + kVocabJsonPath;
-      return {};
-    }
-    const std::string content(
-      (std::istreambuf_iterator<char>(ifs)),
-      std::istreambuf_iterator<char>());
-
-    const std::regex id_piece_pattern(
-      R"__REGEX__(\{[^{}]*"id"\s*:\s*([0-9]+)[^{}]*"piece"\s*:\s*"((?:\\.|[^"\\])*)")__REGEX__");
-    const std::regex piece_id_pattern(
-      R"__REGEX__(\{[^{}]*"piece"\s*:\s*"((?:\\.|[^"\\])*)"[^{}]*"id"\s*:\s*([0-9]+))__REGEX__");
-    const std::regex key_value_pattern(
-      R"__REGEX__("((?:\\.|[^"\\])*)"\s*:\s*([0-9]+))__REGEX__");
-
-    bool found = false;
-    for (std::sregex_iterator it(content.begin(), content.end(), id_piece_pattern), end; it != end; ++it) {
-      const int64_t id = std::stoll((*it)[1].str());
-      const std::string piece = json_unescape((*it)[2].str());
-      if (id < 0) {
-        continue;
-      }
-      if (static_cast<size_t>(id) >= vocab_id_to_piece_.size()) {
-        vocab_id_to_piece_.resize(static_cast<size_t>(id) + 1U);
-      }
-      vocab_id_to_piece_[static_cast<size_t>(id)] = piece;
-      found = true;
-    }
-    for (std::sregex_iterator it(content.begin(), content.end(), piece_id_pattern), end; it != end; ++it) {
-      const int64_t id = std::stoll((*it)[2].str());
-      const std::string piece = json_unescape((*it)[1].str());
-      if (id < 0) {
-        continue;
-      }
-      if (static_cast<size_t>(id) >= vocab_id_to_piece_.size()) {
-        vocab_id_to_piece_.resize(static_cast<size_t>(id) + 1U);
-      }
-      vocab_id_to_piece_[static_cast<size_t>(id)] = piece;
-      found = true;
-    }
-    if (!found) {
-      for (std::sregex_iterator it(content.begin(), content.end(), key_value_pattern), end; it != end; ++it) {
-        const std::string piece = json_unescape((*it)[1].str());
-        const int64_t id = std::stoll((*it)[2].str());
-        if (id < 0) {
-          continue;
-        }
-        if (static_cast<size_t>(id) >= vocab_id_to_piece_.size()) {
-          vocab_id_to_piece_.resize(static_cast<size_t>(id) + 1U);
-        }
-        vocab_id_to_piece_[static_cast<size_t>(id)] = piece;
-        found = true;
-      }
-    }
-
-    if (!found) {
-      last_error_ = "failed to parse vocab json";
-      return {};
-    }
-  }
-
-  std::string text;
-  for (int64_t id : token_ids) {
-    if (id == kBosTokenId || id == kEosTokenId || id == kPadTokenId || id < 0) {
-      continue;
-    }
-    if (static_cast<size_t>(id) >= vocab_id_to_piece_.size()) {
-      continue;
-    }
-    std::string piece = vocab_id_to_piece_[static_cast<size_t>(id)];
-    if (piece.empty()) {
-      continue;
-    }
-    if (piece.front() == '<' && piece.back() == '>') {
-      continue;
-    }
-    replace_all(piece, kSpmSpaceMarker, " ");
-    text += piece;
-  }
-
-  return trim_copy(text);
+  return {};
 }
 
 }  // namespace stt_cpp

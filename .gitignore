@@ -66,11 +66,13 @@ models/**/.cache/
 *.pt
 *.pth
 *.onnx
+*.onnx.bak*
 *.gguf
 *.safetensors
 
 # Nested repo metadata in vendored SDK dirs
 SDK/*/.git/
+SDK/sherpa-onnx-install/
 
 # Local container helper files
 Dockerfile.ai_brain

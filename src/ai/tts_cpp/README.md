@@ -2,7 +2,7 @@
 
 ROS2 C++ TTS node with fallback order:
 1. edge-tts (`ko-KR-SunHiNeural`)
-2. Piper TTS (local ONNX)
+2. Piper TTS (local ONNX via sherpa-onnx C API)
 3. espeak-ng (local fallback)
 
 Topics:
@@ -53,3 +53,7 @@ Local playback tools (install at least one):
 ```bash
 sudo apt-get install -y alsa-utils ffmpeg mpg123
 ```
+
+For local Piper TTS, install `sherpa-onnx` and set at least:
+- `piper_model_path`: path to VITS ONNX model
+- `piper_tokens_path`: path to `tokens.txt`

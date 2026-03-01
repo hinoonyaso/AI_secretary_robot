@@ -15,6 +15,7 @@
   <depend>rclcpp</depend>
   <depend>ros_robot_controller_msgs</depend>
   <depend>rover_common</depend>
+  <depend>sherpa-onnx</depend>
   <depend>std_msgs</depend>
 
   <test_depend>ament_lint_auto</test_depend>

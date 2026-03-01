@@ -1,9 +1,8 @@
 #pragma once
 
-#include <onnxruntime/core/session/onnxruntime_cxx_api.h>
+#include <sherpa-onnx/c-api/c-api.h>
 
 #include <cstdint>
-#include <memory>
 #include <string>
 #include <vector>
 
@@ -23,7 +22,7 @@ class MoonshineOnnx
 {
 public:
   explicit MoonshineOnnx(const MoonshineConfig & cfg);
-  ~MoonshineOnnx() = default;
+  ~MoonshineOnnx();
 
   MoonshineOnnx(const MoonshineOnnx &) = delete;
   MoonshineOnnx & operator=(const MoonshineOnnx &) = delete;
@@ -36,32 +35,15 @@ public:
 
 private:
   std::vector<float> load_audio_pcm(const std::string & wav_path) const;
-
-  std::vector<float> run_encoder(
-    const std::vector<float> & pcm,
-    std::vector<int64_t> & hidden_shape) const;
-
-  std::vector<int64_t> run_decoder_greedy(
-    const std::vector<float> & enc_hidden,
-    const std::vector<int64_t> & enc_shape) const;
-
-  std::string tokens_to_text(const std::vector<int64_t> & token_ids) const;
-
-  Ort::Env env_;
-  Ort::SessionOptions enc_opts_;
-  Ort::SessionOptions dec_opts_;
-  std::unique_ptr<Ort::Session> encoder_session_;
-  std::unique_ptr<Ort::Session> decoder_session_;
+  std::string resolve_tokens_path(const MoonshineConfig & cfg) const;
+  const SherpaOnnxOnlineRecognizer * recognizer_ = nullptr;
+  std::string model_dir_;
+  std::string encoder_path_;
+  std::string decoder_path_;
+  std::string tokens_path_;
+  std::string provider_;
   bool ready_ = false;
   mutable std::string last_error_;
-
-  mutable bool vocab_loaded_ = false;
-  mutable std::vector<std::string> vocab_id_to_piece_;
-
-  static constexpr int64_t kBosTokenId = 1;
-  static constexpr int64_t kEosTokenId = 2;
-  static constexpr int64_t kPadTokenId = 0;
-  static constexpr int64_t kMaxDecodeSteps = 448;
   static constexpr int kSampleRate = 16000;
 };
 

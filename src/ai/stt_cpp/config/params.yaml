@@ -18,3 +18,5 @@ stt_node:
     onnx_use_cuda: true
     onnx_gpu_device_id: 0
     onnx_intra_threads: 2
+    confidence_threshold: 0
+    seconds_per_order: 10.0

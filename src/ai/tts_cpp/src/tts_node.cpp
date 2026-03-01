@@ -6,6 +6,7 @@
 #include <exception>
 #include <filesystem>
 #include <functional>
+#include <set>
 #include <sstream>
 #include <vector>
 
@@ -43,6 +44,9 @@ void TtsNode::declare_and_get_parameters()
   declare_parameter<bool>("auto_play", true);
   declare_parameter<string>("playback_command", "");
   declare_parameter<string>("alsa_device", "default");
+  declare_parameter<vector<string>>(
+    "alsa_fallback_devices",
+    vector<string>{"plughw:CARD=Device,DEV=0", "default"});
 
   declare_parameter<bool>("tts_enabled", true);
   declare_parameter<string>("output_dir", "/tmp/tts_audio");
@@ -55,6 +59,9 @@ void TtsNode::declare_and_get_parameters()
   declare_parameter<string>("piper_executable", "piper");
   declare_parameter<string>("piper_model_path", "");
   declare_parameter<string>("piper_config_path", "");
+  declare_parameter<string>("piper_data_dir", "");
+  declare_parameter<string>("piper_lexicon_path", "");
+  declare_parameter<string>("piper_tokens_path", "");
   declare_parameter<string>("piper_speaker", "");
   declare_parameter<string>("espeak_executable", "espeak-ng");
   declare_parameter<string>("espeak_voice", "ko");
@@ -68,6 +75,7 @@ void TtsNode::declare_and_get_parameters()
   auto_play_ = get_parameter("auto_play").as_bool();
   playback_command_ = get_parameter("playback_command").as_string();
   alsa_device_ = get_parameter("alsa_device").as_string();
+  alsa_fallback_devices_ = get_parameter("alsa_fallback_devices").as_string_array();
 
   TtsConfig cfg;
   cfg.enabled = get_parameter("tts_enabled").as_bool();
@@ -79,6 +87,9 @@ void TtsNode::declare_and_get_parameters()
   cfg.piper_executable = get_parameter("piper_executable").as_string();
   cfg.piper_model_path = get_parameter("piper_model_path").as_string();
   cfg.piper_config_path = get_parameter("piper_config_path").as_string();
+  cfg.piper_data_dir = get_parameter("piper_data_dir").as_string();
+  cfg.piper_lexicon_path = get_parameter("piper_lexicon_path").as_string();
+  cfg.piper_tokens_path = get_parameter("piper_tokens_path").as_string();
   cfg.piper_speaker = get_parameter("piper_speaker").as_string();
   cfg.espeak_executable = get_parameter("espeak_executable").as_string();
   cfg.espeak_voice = get_parameter("espeak_voice").as_string();
@@ -94,7 +105,42 @@ void TtsNode::declare_and_get_parameters()
   }
 
   engine_ = unique_ptr<TtsEngine>(new TtsEngine(cfg));
+  initialize_audio_output_with_fallback();
+}
+
+void TtsNode::initialize_audio_output_with_fallback()
+{
+  vector<string> candidates;
+  if (!alsa_device_.empty()) {
+    candidates.push_back(alsa_device_);
+  }
+  candidates.insert(candidates.end(), alsa_fallback_devices_.begin(), alsa_fallback_devices_.end());
+
+  set<string> visited;
+  for (const auto & device : candidates) {
+    if (device.empty() || visited.count(device) > 0) {
+      continue;
+    }
+    visited.insert(device);
+    auto candidate = std::make_unique<AlsaPlayer>(device);
+    if (!candidate->is_available()) {
+      continue;
+    }
+    if (candidate->probe(16000, 1)) {
+      alsa_device_ = device;
+      alsa_player_ = std::move(candidate);
+      RCLCPP_INFO(get_logger(), "alsa output selected: %s", alsa_device_.c_str());
+      return;
+    }
+    RCLCPP_WARN(
+      get_logger(), "alsa probe failed for %s: %s",
+      device.c_str(), candidate->last_error().c_str());
+  }
+
   alsa_player_ = std::make_unique<AlsaPlayer>(alsa_device_);
+  RCLCPP_WARN(
+    get_logger(), "no working ALSA output found during self-check, keep device=%s",
+    alsa_device_.c_str());
 }
 
 void TtsNode::on_text(const std_msgs::msg::String::SharedPtr msg)

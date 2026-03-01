@@ -1,9 +1,108 @@
 # JetRover "Rover" — Host 미구현 부분 Codex 프롬프트 모음
 
-> **실행 순서**: Prompt H1 → H2 → H3 → H4 → H5 → H6 (순서대로 진행)
+> **업데이트**: 2026-03-01 - AI 컴포넌트 마이그레이션 가이드 추가
+> **실행 순서**: Prompt H0 → H1 → H2 → H3 → H4 → H5 → H6 (순서대로 진행)
 > **목표**: Host (Ubuntu 22.04 네이티브) 환경의 Nav2, SLAM, 통합 시스템 구축
 > **환경**: Jetson Orin Nano 8GB / Ubuntu 22.04 / ROS2 Humble / JetPack 6.0
 > **역할 분담**: Host = 로보틱스 제어 / Brain (Docker) = AI 추론
+
+---
+
+## 🚨 [긴급] AI 컴포넌트 검증 실패 복구
+
+### 현재 상태 (2026-03-01)
+- ✅ **STT (Moonshine)**: sherpa-onnx 통합 완료, 실제 WAV 테스트 통과
+- ❌ **TTS**: espeak-ng, edge-tts, piper 미설치 → **즉시 복구 필요**
+- ❌ **LLM**: Ollama, llama-server 미설치 → **즉시 복구 필요**
+
+### 즉시 실행 (5분 복구)
+
+```bash
+cd /home/sang/dev_ws/AI_secretary_robot
+
+# TTS 의존성 설치 (2분)
+bash scripts/setup_tts_dependencies.sh
+
+# LLM 의존성 설치 (10분)
+bash scripts/setup_llm_dependencies.sh
+
+# 검증
+source install/setup.bash
+ros2 launch tts_cpp voice_pipeline_local.launch.py
+```
+
+**설치 내역**:
+- ✅ espeak-ng (fallback TTS)
+- ✅ edge-tts (클라우드 TTS)
+- ✅ piper (로컬 고음질 TTS)
+- ✅ Ollama + Qwen2.5:1.5b
+- ⚠️ llama.cpp (30분 빌드)
+
+### 상세 가이드
+1. **빠른 복구**: [../RECOVERY_README.md](../RECOVERY_README.md)
+2. **5분 가이드**: [QUICKSTART_RECOVERY.md](./QUICKSTART_RECOVERY.md)
+3. **전체 복구**: [migration_recovery_guide.md](./migration_recovery_guide.md)
+
+### Planning 문서 준수 마이그레이션 (장기)
+Planning 문서([plan.md](./plan.md))와 실제 구현 차이 해소:
+
+1. **STT**: [codex_prompt_stt_sherpa_migration.md](./codex_prompt_stt_sherpa_migration.md) (4~6시간)
+2. **TTS**: [codex_prompt_tts_sherpa_migration.md](./codex_prompt_tts_sherpa_migration.md) (6~8시간)
+3. **LLM**: [codex_prompt_llm_llamacpp_migration.md](./codex_prompt_llm_llamacpp_migration.md) (3~5시간)
+
+---
+
+## 🛠️ Prompt H0: ROS 2 Humble 설치 (필수 선행)
+
+```
+[Context]
+- Host (Ubuntu 22.04)에 ROS 2 Humble이 설치되어 있지 않음
+- 오류: `/opt/ros/humble/setup.bash: No such file or directory`
+- 목표: ROS 2 Humble Base 설치 및 환경 설정
+
+[Task]
+Install ROS 2 Humble on Jetson Orin Nano (Ubuntu 22.04).
+
+Requirements:
+
+1. [Block A] 로케일 설정:
+   ```bash
+   sudo apt update && sudo apt install locales
+   sudo locale-gen en_US en_US.UTF-8
+   sudo update-locale LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8
+   export LANG=en_US.UTF-8
+   ```
+
+2. [Block B] 소스 추가:
+   ```bash
+   sudo apt install software-properties-common
+   sudo add-apt-repository universe
+   
+   sudo apt update && sudo apt install curl -y
+   sudo curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg
+   
+   echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu $(. /etc/os-release && echo $UBUNTU_CODENAME) main" | sudo tee /etc/apt/sources.list.d/ros2.list > /dev/null
+   ```
+
+3. [Block C] 패키지 설치 (Base):
+   ```bash
+   sudo apt update
+   sudo apt install -y ros-humble-ros-base
+   sudo apt install -y ros-dev-tools
+   ```
+
+4. [Block D] 환경 설정:
+   ```bash
+   # 현재 세션 적용
+   source /opt/ros/humble/setup.bash
+   
+   # 영구 적용
+   echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc
+   ```
+
+[Verification]
+printenv ROS_DISTRO  # Should be 'humble'
+```
 
 ---
 

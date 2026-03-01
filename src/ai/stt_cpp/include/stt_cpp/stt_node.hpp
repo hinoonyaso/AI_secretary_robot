@@ -2,8 +2,10 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "rclcpp/rclcpp.hpp"
+#include "rcl_interfaces/msg/set_parameters_result.hpp"
 #include "ros_robot_controller_msgs/msg/audio_buffer.hpp"
 #include "std_msgs/msg/string.hpp"
 
@@ -19,6 +21,10 @@ public:
 
 private:
   void declare_and_get_parameters();
+  rcl_interfaces::msg::SetParametersResult on_set_parameters(
+    const std::vector<rclcpp::Parameter> & parameters);
+  bool pass_runtime_thresholds(const SttResult & stt, double audio_seconds) const;
+  int estimate_confidence(const std::string & text) const;
   void on_audio_path(const std_msgs::msg::String::SharedPtr msg);
   void on_audio_buffer(const ros_robot_controller_msgs::msg::AudioBuffer::SharedPtr msg);
 
@@ -36,8 +42,11 @@ private:
   bool onnx_use_cuda_;
   int onnx_intra_threads_;
   bool stt_enabled_;
+  int confidence_threshold_;
+  double seconds_per_order_;
 
   std::unique_ptr<SttEngine> stt_engine_;
+  OnSetParametersCallbackHandle::SharedPtr parameter_cb_handle_;
 
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub_audio_path_;
   rclcpp::Subscription<ros_robot_controller_msgs::msg::AudioBuffer>::SharedPtr sub_audio_buf_;

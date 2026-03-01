@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "rclcpp/rclcpp.hpp"
 #include "std_msgs/msg/bool.hpp"
@@ -20,6 +21,7 @@ public:
 
 private:
   void declare_and_get_parameters();
+  void initialize_audio_output_with_fallback();
   void on_text(const std_msgs::msg::String::SharedPtr msg);
   bool play_audio_file(const std::string & audio_path);
   bool run_playback_command(const std::string & command_template, const std::string & audio_path);
@@ -32,6 +34,7 @@ private:
   bool auto_play_ = true;
   std::string playback_command_ = "";
   std::string alsa_device_ = "default";
+  std::vector<std::string> alsa_fallback_devices_;
 
   std::unique_ptr<TtsEngine> engine_;
   std::unique_ptr<AlsaPlayer> alsa_player_;

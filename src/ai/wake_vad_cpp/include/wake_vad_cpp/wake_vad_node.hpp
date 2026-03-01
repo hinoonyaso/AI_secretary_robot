@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "rclcpp/rclcpp.hpp"
+#include "rcl_interfaces/msg/set_parameters_result.hpp"
 #include "ros_robot_controller_msgs/msg/audio_buffer.hpp"
 #include "std_msgs/msg/bool.hpp"
 #include "std_msgs/msg/string.hpp"
@@ -31,7 +32,13 @@ public:
 
 private:
   void declare_and_get_parameters();
+  std::vector<std::string> keywords_from_mic_type(const std::string & mic_type) const;
+  bool start_audio_input_with_fallback();
+  bool update_keyword_runtime(const std::string & keyword_path, const std::string & wake_keyword);
+  rcl_interfaces::msg::SetParametersResult on_set_parameters(
+    const std::vector<rclcpp::Parameter> & parameters);
   std::string resolve_keyword_path(const std::string & configured_path) const;
+  std::string resolve_keyword_by_name(const std::string & keyword_dir, const std::string & wake_keyword) const;
   std::string resolve_model_path(const std::string & configured_path) const;
   void initialize_engines();
   void on_audio_frame(const AudioInput::Frame & frame);
@@ -75,6 +82,10 @@ private:
   double wake_prompt_wait_timeout_sec_;
   std::string tts_playback_done_topic_;
   bool save_wav_for_debug_;
+  std::string mic_type_;
+  std::string audio_device_hint_;
+  std::string wake_keyword_;
+  std::string keyword_dir_path_;
 
   std::vector<int16_t> record_buffer_;
   std::queue<AudioInput::Frame> frame_queue_;
@@ -89,6 +100,7 @@ private:
   rclcpp::Time record_start_;
   rclcpp::Time silence_start_;
   bool silence_tracking_;
+  OnSetParametersCallbackHandle::SharedPtr parameter_cb_handle_;
 };
 
 }  // namespace wake_vad_cpp

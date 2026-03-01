@@ -21,9 +21,11 @@ public:
     const std::vector<int16_t> & samples,
     uint32_t sample_rate,
     uint16_t channels = 1);
+  bool probe(uint32_t sample_rate = 16000, uint16_t channels = 1);
 
   bool is_available() const { return available_; }
   const std::string & last_error() const { return last_error_; }
+  const std::string & device() const { return device_; }
 
 private:
 #ifdef HAVE_ALSA

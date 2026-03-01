@@ -1,6 +1,8 @@
 #include "llm_cpp/llm_node.hpp"
 
+#include <chrono>
 #include <cstdlib>
+#include <filesystem>
 #include <functional>
 
 using namespace std;
@@ -20,6 +22,21 @@ LlmNode::LlmNode()
 
   sub_chat_text_ = create_subscription<std_msgs::msg::String>(
     input_topic_, 10, bind(&LlmNode::on_chat_text, this, placeholders::_1));
+
+  health_timer_ = create_wall_timer(
+    chrono::minutes(1),
+    [this]() {
+      if (!server_mgr_) {
+        return;
+      }
+      if (!server_mgr_->is_healthy()) {
+        RCLCPP_WARN(get_logger(), "llama.cpp server unhealthy, restarting");
+        if (!server_mgr_->restart()) {
+          RCLCPP_ERROR(
+            get_logger(), "llama.cpp restart failed: %s", server_mgr_->last_error().c_str());
+        }
+      }
+    });
 
   RCLCPP_INFO(get_logger(), "llm_cpp node started");
 }
@@ -47,9 +64,22 @@ void LlmNode::declare_and_get_parameters()
   declare_parameter<string>("gemini_model", "gemini-2.5-flash");
   declare_parameter<int>("gemini_timeout_sec", 20);
 
-  declare_parameter<string>("ollama_url", "http://127.0.0.1:11434/api/generate");
-  declare_parameter<string>("ollama_model", "qwen2.5:1.5b");
-  declare_parameter<int>("ollama_timeout_sec", 45);
+  declare_parameter<string>("llamacpp_endpoint", "http://127.0.0.1:8081");
+  declare_parameter<string>("llamacpp_model", "qwen2.5-1.5b-instruct");
+  declare_parameter<int>("llamacpp_timeout_sec", 45);
+
+  declare_parameter<string>(
+    "llama_server_binary",
+    "/usr/local/bin/llama-server");
+  declare_parameter<string>(
+    "llama_model_path",
+    "/home/sang/dev_ws/AI_secretary_robot/models/llm/qwen2.5-1.5b-instruct-q4_k_m.gguf");
+  declare_parameter<int>("llama_port", 8081);
+  declare_parameter<int>("llama_ngl", 99);
+  declare_parameter<int>("llama_ctx_size", 2048);
+  declare_parameter<int>("llama_threads", 4);
+  declare_parameter<bool>("llama_use_mmap", true);
+  declare_parameter<bool>("llama_use_mlock", false);
   declare_parameter<string>("llm_provider", "auto");
 
   llm_enabled_ = get_parameter("llm_enabled").as_bool();
@@ -70,9 +100,17 @@ void LlmNode::declare_and_get_parameters()
   gemini_api_key_ = get_parameter("gemini_api_key").as_string();
   gemini_model_ = get_parameter("gemini_model").as_string();
   gemini_timeout_sec_ = get_parameter("gemini_timeout_sec").as_int();
-  ollama_url_ = get_parameter("ollama_url").as_string();
-  ollama_model_ = get_parameter("ollama_model").as_string();
-  ollama_timeout_sec_ = get_parameter("ollama_timeout_sec").as_int();
+  llamacpp_endpoint_ = get_parameter("llamacpp_endpoint").as_string();
+  llamacpp_model_ = get_parameter("llamacpp_model").as_string();
+  llamacpp_timeout_sec_ = get_parameter("llamacpp_timeout_sec").as_int();
+  llama_server_binary_ = get_parameter("llama_server_binary").as_string();
+  llama_model_path_ = get_parameter("llama_model_path").as_string();
+  llama_port_ = get_parameter("llama_port").as_int();
+  llama_ngl_ = get_parameter("llama_ngl").as_int();
+  llama_ctx_size_ = get_parameter("llama_ctx_size").as_int();
+  llama_threads_ = get_parameter("llama_threads").as_int();
+  llama_use_mmap_ = get_parameter("llama_use_mmap").as_bool();
+  llama_use_mlock_ = get_parameter("llama_use_mlock").as_bool();
 
   if (openai_api_key_.empty()) {
     const char * key = getenv("OPENAI_API_KEY");
@@ -121,11 +159,39 @@ void LlmNode::declare_and_get_parameters()
   config.gemini_api_key = gemini_api_key_;
   config.gemini_model = gemini_model_;
   config.gemini_timeout_sec = gemini_timeout_sec_;
-  config.ollama_url = ollama_url_;
-  config.ollama_model = ollama_model_;
-  config.ollama_timeout_sec = ollama_timeout_sec_;
+  config.llamacpp_endpoint = llamacpp_endpoint_;
+  config.llamacpp_model = llamacpp_model_;
+  config.llamacpp_timeout_sec = llamacpp_timeout_sec_;
   config.provider = get_parameter("llm_provider").as_string();
-  engine_ = unique_ptr<LlmEngine>(new LlmEngine(config));
+
+  LlamaServerConfig server_cfg;
+  server_cfg.server_binary = llama_server_binary_;
+  server_cfg.model_path = llama_model_path_;
+  server_cfg.port = llama_port_;
+  server_cfg.ngl = llama_ngl_;
+  server_cfg.ctx_size = llama_ctx_size_;
+  server_cfg.n_threads = llama_threads_;
+  server_cfg.use_mmap = llama_use_mmap_;
+  server_cfg.use_mlock = llama_use_mlock_;
+  server_mgr_ = std::make_shared<LlamaServerManager>(server_cfg);
+
+  const bool has_server_binary = std::filesystem::is_regular_file(llama_server_binary_);
+  const bool has_model_file = std::filesystem::is_regular_file(llama_model_path_);
+  if (!has_server_binary || !has_model_file) {
+    RCLCPP_INFO(
+      get_logger(),
+      "Skip llama.cpp autostart (binary/model not found). binary=%s model=%s",
+      has_server_binary ? "ok" : "missing",
+      has_model_file ? "ok" : "missing");
+  } else if (!server_mgr_->start()) {
+    RCLCPP_WARN(
+      get_logger(), "llama.cpp server start failed: %s (fallback chain continues)",
+      server_mgr_->last_error().c_str());
+  } else {
+    RCLCPP_INFO(get_logger(), "llama.cpp server started at %s", server_mgr_->endpoint().c_str());
+  }
+
+  engine_ = unique_ptr<LlmEngine>(new LlmEngine(config, server_mgr_));
 }
 
 void LlmNode::on_chat_text(const std_msgs::msg::String::SharedPtr msg)
@@ -169,7 +235,7 @@ void LlmNode::on_chat_text(const std_msgs::msg::String::SharedPtr msg)
 int main(int argc, char ** argv)
 {
   rclcpp::init(argc, argv);
-  auto node = make_shared<llm_cpp::LlmNode>();
+  auto node = std::make_shared<llm_cpp::LlmNode>();
   rclcpp::spin(node);
   rclcpp::shutdown();
   return 0;

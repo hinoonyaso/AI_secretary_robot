@@ -21,7 +21,16 @@ llm_node:
     gemini_model: "gemini-2.5-flash"
     gemini_timeout_sec: 20
 
-    ollama_url: "http://127.0.0.1:11434/api/generate"
-    ollama_model: "qwen2.5:1.5b"
-    ollama_timeout_sec: 45
+    llamacpp_endpoint: "http://127.0.0.1:8081"
+    llamacpp_model: "qwen2.5-1.5b-instruct"
+    llamacpp_timeout_sec: 45
+
+    llama_server_binary: "/usr/local/bin/llama-server"
+    llama_model_path: "/home/sang/dev_ws/AI_secretary_robot/models/llm/qwen2.5-1.5b-instruct-q4_k_m.gguf"
+    llama_port: 8081
+    llama_ngl: 99
+    llama_ctx_size: 2048
+    llama_threads: 4
+    llama_use_mmap: true
+    llama_use_mlock: false
     llm_provider: "auto"

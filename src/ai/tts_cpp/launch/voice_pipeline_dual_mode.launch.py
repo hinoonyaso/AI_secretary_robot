@@ -6,7 +6,7 @@ ai_mode 인수에 따라 오프라인/하이브리드 모드를 선택합니다.
   offline:
     STT    : moonshine-tiny-ko ONNX (로컬 GPU)
     Intent : 키워드 분류 (로컬)
-    LLM    : Ollama qwen2.5:1.5b (로컬)
+    LLM    : llama.cpp qwen2.5-1.5b-instruct-q4_k_m.gguf (로컬)
     TTS    : Piper TTS (로컬) → espeak-ng 폴백
 
   hybrid:
@@ -44,8 +44,8 @@ MODE_MAP = {
         "stt_engine": "moonshine_onnx",
         "intent_provider": "keyword",
         "groq_enabled": False,
-        "llm_provider": "ollama",
-        "tts_engine": "piper",
+        "llm_provider": "llamacpp",
+        "tts_engine": "espeak",
     },
     "hybrid": {
         "stt_engine": "auto",

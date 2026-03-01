@@ -77,6 +77,27 @@ bool AlsaPlayer::play_pcm(
 #endif
 }
 
+bool AlsaPlayer::probe(uint32_t sample_rate, uint16_t channels)
+{
+#ifndef HAVE_ALSA
+  (void)sample_rate;
+  (void)channels;
+  last_error_ = "alsa_not_compiled";
+  return false;
+#else
+  last_error_.clear();
+  if (!available_) {
+    last_error_ = "alsa_unavailable";
+    return false;
+  }
+  if (!open_device(sample_rate, channels)) {
+    return false;
+  }
+  close_device();
+  return true;
+#endif
+}
+
 #ifdef HAVE_ALSA
 bool AlsaPlayer::open_device(uint32_t sample_rate, uint16_t channels)
 {

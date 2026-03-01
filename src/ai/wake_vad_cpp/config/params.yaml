@@ -1,16 +1,18 @@
 wake_vad_node:
   ros__parameters:
     access_key: ""
-    keyword_path: "/home/ubuntu/rover_ws/src/wake_vad_cpp/wake_sound"
-    porcupine_model_path: "/home/ubuntu/rover_ws/src/wake_vad_cpp/resource/porcupine_params_ko.pv"
+    keyword_path: ""
+    porcupine_model_path: ""
     audio_device_index: -1
+    mic_type: "mic6_circle"
+    audio_device_hint: "xfm-dp"
     sensitivity: 0.5
     vad_threshold: 0.5
     silence_duration: 1.5
     max_record_duration: 10.0
-    wav_output_dir: "/home/ubuntu/rover_ws/src/wake_vad_cpp/record_sound"
+    wav_output_dir: ""
     listen_timeout: 8.0
-    vad_model_path: "/home/ubuntu/rover_ws/src/wake_vad_cpp/resource/silero_vad.onnx"
+    vad_model_path: ""
     wake_prompt_tts_enabled: true
     wake_prompt_tts_topic: "/llm/response"
     wake_prompt_tts_text: "네, 말씀하세요."
@@ -18,3 +20,4 @@ wake_vad_node:
     wake_prompt_wait_timeout_sec: 15.0
     tts_playback_done_topic: "/tts/playback_done"
     save_wav_for_debug: false
+    wake_keyword: ""

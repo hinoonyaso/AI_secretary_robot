@@ -3,8 +3,11 @@
 #include <rover_common/shell_utils.hpp>
 #include <rover_common/string_utils.hpp>
 
+#include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <sstream>
 #include <system_error>
 
@@ -16,6 +19,39 @@ namespace tts_cpp
 TtsEngine::TtsEngine(const TtsConfig & config)
 : config_(config)
 {
+  // espeak 전용 모드에서는 Piper 초기화를 생략해 모델 호환성 문제로 인한 기동 실패를 방지한다.
+  if (config_.engine != "espeak" && !config_.piper_model_path.empty()) {
+    PiperOnnxConfig piper_cfg;
+    piper_cfg.model_path = config_.piper_model_path;
+    const std::filesystem::path model_path(config_.piper_model_path);
+    const std::filesystem::path model_dir = model_path.parent_path();
+
+    piper_cfg.data_dir = config_.piper_data_dir;
+    if (piper_cfg.data_dir.empty()) {
+      piper_cfg.data_dir = model_dir.string();
+    }
+
+    piper_cfg.tokens_path = config_.piper_tokens_path;
+    if (piper_cfg.tokens_path.empty()) {
+      const std::filesystem::path tokens = model_dir / "tokens.txt";
+      if (std::filesystem::is_regular_file(tokens)) {
+        piper_cfg.tokens_path = tokens.string();
+      }
+    }
+
+    piper_cfg.lexicon_path = config_.piper_lexicon_path;
+    if (piper_cfg.lexicon_path.empty()) {
+      const std::filesystem::path lexicon = model_dir / "lexicon.txt";
+      if (std::filesystem::is_regular_file(lexicon)) {
+        piper_cfg.lexicon_path = lexicon.string();
+      }
+    }
+
+    piper_cfg.num_threads = 2;
+    piper_cfg.debug = false;
+    piper_onnx_ = std::make_unique<PiperOnnx>(piper_cfg);
+  }
+
   error_code ec;
   if (!config_.output_dir.empty()) {
     filesystem::create_directories(config_.output_dir, ec);
@@ -126,46 +162,40 @@ TtsResult TtsEngine::synthesize_edge(const string & text, const string & out_pat
 
 TtsResult TtsEngine::synthesize_piper(const string & text, const string & out_path) const
 {
-  /// Piper TTS (로컬 VITS ONNX) — sherpa-onnx 또는 piper 바이너리 호출
+  /// Piper TTS (로컬 VITS ONNX) — sherpa-onnx C API 직접 호출
   TtsResult out;
   out.engine = "piper";
 
-  if (config_.piper_model_path.empty()) {
-    out.error = "piper_model_path_empty";
+  if (!piper_onnx_ || !piper_onnx_->is_ready()) {
+    out.error = "piper_onnx_not_initialized";
+    if (piper_onnx_ && !piper_onnx_->last_error().empty()) {
+      out.error += ": " + piper_onnx_->last_error();
+    }
     return out;
   }
 
-  ostringstream cmd;
-  cmd << rover_common::shell_escape_single_quote(config_.piper_executable)
-      << " --model " << rover_common::shell_escape_single_quote(config_.piper_model_path);
-  if (!config_.piper_config_path.empty()) {
-    cmd << " --config " << rover_common::shell_escape_single_quote(config_.piper_config_path);
-  }
-  if (!config_.piper_speaker.empty()) {
-    cmd << " --speaker " << rover_common::shell_escape_single_quote(config_.piper_speaker);
-  }
-  cmd << " --output_file " << rover_common::shell_escape_single_quote(out_path)
-      << " 2>&1";
-
-  // piper reads text from stdin
-  const string full_cmd = string("echo ") + rover_common::shell_escape_single_quote(text)
-    + " | " + cmd.str();
-
-  const rover_common::ShellResult shell = rover_common::run_shell_command(full_cmd);
-  if (shell.exit_code < 0) {
-    out.error = "piper_popen_failed";
+  const PiperOnnxResult gen = piper_onnx_->synthesize(text);
+  if (!gen.ok || gen.pcm_samples.empty() || gen.sample_rate == 0U) {
+    out.error = "piper_onnx_failed: " + gen.error;
     return out;
   }
 
-  if (shell.ok) {
-    out.ok = true;
-    out.audio_path = out_path;
+  out.pcm_samples.reserve(gen.pcm_samples.size());
+  for (float v : gen.pcm_samples) {
+    out.pcm_samples.push_back(float_to_pcm16(v));
+  }
+  out.pcm_sample_rate = gen.sample_rate;
+  out.pcm_channels = 1;
+
+  if (!write_pcm_to_wav(out_path, out.pcm_samples, out.pcm_sample_rate)) {
+    out.error = "failed_to_write_wav";
+    out.pcm_samples.clear();
+    out.pcm_sample_rate = 0;
     return out;
   }
 
-  ostringstream err;
-  err << "piper_failed(exit=" << shell.exit_code << "): " << rover_common::trim(shell.output);
-  out.error = err.str();
+  out.ok = true;
+  out.audio_path = out_path;
   return out;
 }
 
@@ -209,6 +239,75 @@ string TtsEngine::make_output_path(const string & extension) const
   ostringstream oss;
   oss << config_.output_dir << "/tts_" << ms << "." << extension;
   return oss.str();
+}
+
+bool TtsEngine::write_pcm_to_wav(
+  const std::string & path,
+  const std::vector<int16_t> & samples,
+  uint32_t sample_rate) const
+{
+  if (samples.empty() || sample_rate == 0U) {
+    return false;
+  }
+
+  std::ofstream ofs(path, std::ios::binary);
+  if (!ofs) {
+    return false;
+  }
+
+  const uint16_t channels = 1;
+  const uint16_t bits_per_sample = 16;
+  const uint16_t block_align = channels * (bits_per_sample / 8U);
+  const uint32_t byte_rate = sample_rate * block_align;
+  const uint32_t data_size = static_cast<uint32_t>(samples.size() * sizeof(int16_t));
+  const uint32_t chunk_size = 36U + data_size;
+
+  auto write_u16 = [&ofs](uint16_t v) {
+      const char b[2] = {
+        static_cast<char>(v & 0xFFU),
+        static_cast<char>((v >> 8U) & 0xFFU)
+      };
+      ofs.write(b, sizeof(b));
+    };
+  auto write_u32 = [&ofs](uint32_t v) {
+      const char b[4] = {
+        static_cast<char>(v & 0xFFU),
+        static_cast<char>((v >> 8U) & 0xFFU),
+        static_cast<char>((v >> 16U) & 0xFFU),
+        static_cast<char>((v >> 24U) & 0xFFU)
+      };
+      ofs.write(b, sizeof(b));
+    };
+
+  ofs.write("RIFF", 4);
+  write_u32(chunk_size);
+  ofs.write("WAVE", 4);
+  ofs.write("fmt ", 4);
+  write_u32(16U);
+  write_u16(1U);
+  write_u16(channels);
+  write_u32(sample_rate);
+  write_u32(byte_rate);
+  write_u16(block_align);
+  write_u16(bits_per_sample);
+  ofs.write("data", 4);
+  write_u32(data_size);
+
+  for (const int16_t pcm : samples) {
+    const char b[2] = {
+      static_cast<char>(pcm & 0xFF),
+      static_cast<char>((static_cast<uint16_t>(pcm) >> 8U) & 0xFFU)
+    };
+    ofs.write(b, sizeof(b));
+  }
+
+  return static_cast<bool>(ofs);
+}
+
+int16_t TtsEngine::float_to_pcm16(float sample)
+{
+  const float clamped = std::clamp(sample, -1.0F, 1.0F);
+  return static_cast<int16_t>(clamped * 32767.0F);
 }
 
 }  // namespace tts_cpp

@@ -25,6 +25,7 @@ AudioInput::AudioInput()
   sample_rate_(16000),
   channels_(1),
   frame_length_(512),
+  selected_device_index_(paNoDevice),
   running_(false),
   initialized_(false),
   stream_(nullptr),
@@ -47,6 +48,19 @@ bool AudioInput::configure(int device_index, int sample_rate, int channels, int 
   frame_length_  = frame_length;
 
   return validate_config_or_fix_();
+}
+
+void AudioInput::set_preferred_device_keywords(const vector<string> & keywords)
+{
+  if (is_running()) return;
+  preferred_device_keywords_.clear();
+  preferred_device_keywords_.reserve(keywords.size());
+  for (const auto & keyword : keywords) {
+    const string normalized = to_lower(keyword);
+    if (!normalized.empty()) {
+      preferred_device_keywords_.push_back(normalized);
+    }
+  }
 }
 
 bool AudioInput::validate_config_or_fix_() const
@@ -96,6 +110,13 @@ int AudioInput::resolve_device_index_() const
 
     const PaDeviceInfo* info = Pa_GetDeviceInfo(i);
     const string name = to_lower(info && info->name ? info->name : "");
+    if (!preferred_device_keywords_.empty()) {
+      for (const auto & keyword : preferred_device_keywords_) {
+        if (!keyword.empty() && name.find(keyword) != string::npos) {
+          return i;
+        }
+      }
+    }
     if (name.find("xfm-dp") != string::npos ||
         name.find("xfmdp") != string::npos ||
         name.find("xfm dp") != string::npos) {
@@ -128,21 +149,38 @@ bool AudioInput::start()
   if (running_) return true;
 
   if (!validate_config_or_fix_()) return false;
+  last_error_.clear();
+  selected_device_index_ = paNoDevice;
+  selected_device_name_.clear();
 
   PaError err;
 
   if (!initialized_) {
     err = Pa_Initialize();
-    if (err != paNoError) return false;
+    if (err != paNoError) {
+      last_error_ = Pa_GetErrorText(err);
+      return false;
+    }
     initialized_ = true;
   }
 
   const int dev = resolve_device_index_();
-  if (dev == paNoDevice) return false;
+  if (dev == paNoDevice) {
+    last_error_ = "no_supported_input_device";
+    return false;
+  }
 
   const PaDeviceInfo* devInfo = Pa_GetDeviceInfo(dev);
-  if (!devInfo) return false;
-  if (devInfo->maxInputChannels < 1) return false;
+  if (!devInfo) {
+    last_error_ = "invalid_device_info";
+    return false;
+  }
+  if (devInfo->maxInputChannels < 1) {
+    last_error_ = "device_has_no_input_channels";
+    return false;
+  }
+  selected_device_index_ = dev;
+  selected_device_name_ = devInfo->name ? devInfo->name : "";
 
   PaStreamParameters inParams;
   inParams.device = dev;
@@ -171,6 +209,7 @@ bool AudioInput::start()
 
   if (err != paNoError) {
     stream_ = nullptr;
+    last_error_ = Pa_GetErrorText(err);
     return false;
   }
 
@@ -178,6 +217,7 @@ bool AudioInput::start()
   if (err != paNoError) {
     Pa_CloseStream(stream_);
     stream_ = nullptr;
+    last_error_ = Pa_GetErrorText(err);
     return false;
   }
 
@@ -206,6 +246,21 @@ void AudioInput::stop()
 bool AudioInput::is_running() const
 {
   return running_.load();
+}
+
+int AudioInput::selected_device_index() const
+{
+  return selected_device_index_;
+}
+
+string AudioInput::selected_device_name() const
+{
+  return selected_device_name_;
+}
+
+string AudioInput::last_error() const
+{
+  return last_error_;
 }
 
 /// PortAudio 콜백 (오디오 스레드): PCM 프레임을 frame_buf_에 복사 후 등록된 콜백 호출

@@ -1,7 +1,7 @@
 """
 로컬 전용 음성 파이프라인 런치파일
   - STT  : moonshine-tiny-ko (로컬)
-  - LLM  : ollama (로컬, 클라우드 API 스킵)
+  - LLM  : llama.cpp (로컬, 클라우드 API 스킵)
   - TTS  : Piper → espeak-ng (로컬, edge-tts 스킵)
   - 기타  : wake_vad, intent_router 모두 로컬
 
@@ -12,7 +12,6 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import ExecuteProcess
 from launch.actions import IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import PathJoinSubstitution
@@ -29,7 +28,7 @@ def generate_launch_description():
     router_launch = PathJoinSubstitution(
         [FindPackageShare("intent_router_cpp"), "launch", "intent_router.launch.py"])
 
-    # ── LLM: ollama 직접 호출 ──
+    # ── LLM: llama.cpp 직접 호출 ──
     llm_params = os.path.join(
         get_package_share_directory("llm_cpp"), "config", "params.yaml")
 
@@ -38,22 +37,7 @@ def generate_launch_description():
         executable="llm_node",
         name="llm_node",
         output="screen",
-        parameters=[llm_params, {"llm_provider": "ollama"}],
-    )
-
-    # ── LLM local server (ollama) 상시 대기 ──
-    ollama_serve = ExecuteProcess(
-        cmd=["ollama", "serve"],
-        output="screen",
-    )
-    ollama_warmup = ExecuteProcess(
-        cmd=[
-            "bash", "-lc",
-            "sleep 2; curl -s http://127.0.0.1:11434/api/generate "
-            "-H 'Content-Type: application/json' "
-            "-d '{\"model\":\"qwen2.5:1.5b\",\"prompt\":\"안녕\",\"stream\":false,\"keep_alive\":\"60m\"}' >/dev/null || true"
-        ],
-        output="screen",
+        parameters=[llm_params, {"llm_provider": "llamacpp"}],
     )
 
     # ── TTS: Piper → espeak-ng (edge-tts 스킵) ──
@@ -69,8 +53,6 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
-        ollama_serve,
-        ollama_warmup,
         IncludeLaunchDescription(PythonLaunchDescriptionSource(wake_stt_launch)),
         IncludeLaunchDescription(PythonLaunchDescriptionSource(router_launch)),
         llm_node,
