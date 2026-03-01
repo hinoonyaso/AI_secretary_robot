@@ -52,13 +52,10 @@ void TtsNode::declare_and_get_parameters()
   declare_parameter<string>("edge_rate", "+0%");
   declare_parameter<string>("edge_volume", "+0%");
 
-  declare_parameter<string>("melo_script_path", "");
-  declare_parameter<string>("melo_language", "KR");
-  declare_parameter<string>("melo_speaker", "");
-  declare_parameter<string>("melo_speed", "1.0");
-  declare_parameter<string>("melo_device", "auto");
-  declare_parameter<string>("melo_server_url", "http://127.0.0.1:5500/synthesize");
-  declare_parameter<int>("melo_server_timeout_sec", 15);
+  declare_parameter<string>("piper_executable", "piper");
+  declare_parameter<string>("piper_model_path", "");
+  declare_parameter<string>("piper_config_path", "");
+  declare_parameter<string>("piper_speaker", "");
   declare_parameter<string>("espeak_executable", "espeak-ng");
   declare_parameter<string>("espeak_voice", "ko");
   declare_parameter<string>("tts_engine", "auto");
@@ -79,13 +76,10 @@ void TtsNode::declare_and_get_parameters()
   cfg.edge_voice = get_parameter("edge_voice").as_string();
   cfg.edge_rate = get_parameter("edge_rate").as_string();
   cfg.edge_volume = get_parameter("edge_volume").as_string();
-  cfg.melo_script_path = get_parameter("melo_script_path").as_string();
-  cfg.melo_language = get_parameter("melo_language").as_string();
-  cfg.melo_speaker = get_parameter("melo_speaker").as_string();
-  cfg.melo_speed = get_parameter("melo_speed").as_string();
-  cfg.melo_device = get_parameter("melo_device").as_string();
-  cfg.melo_server_url = get_parameter("melo_server_url").as_string();
-  cfg.melo_server_timeout_sec = get_parameter("melo_server_timeout_sec").as_int();
+  cfg.piper_executable = get_parameter("piper_executable").as_string();
+  cfg.piper_model_path = get_parameter("piper_model_path").as_string();
+  cfg.piper_config_path = get_parameter("piper_config_path").as_string();
+  cfg.piper_speaker = get_parameter("piper_speaker").as_string();
   cfg.espeak_executable = get_parameter("espeak_executable").as_string();
   cfg.espeak_voice = get_parameter("espeak_voice").as_string();
   cfg.engine = get_parameter("tts_engine").as_string();
@@ -96,15 +90,6 @@ void TtsNode::declare_and_get_parameters()
       cfg.edge_script_path = (filesystem::path(share_dir) / "scripts" / "edge_tts_synth.py").string();
     } catch (const exception & e) {
       RCLCPP_WARN(get_logger(), "failed to resolve edge script path: %s", e.what());
-    }
-  }
-
-  if (cfg.melo_script_path.empty()) {
-    try {
-      const string share_dir = ament_index_cpp::get_package_share_directory("tts_cpp");
-      cfg.melo_script_path = (filesystem::path(share_dir) / "scripts" / "melo_tts_file_fallback.py").string();
-    } catch (const exception & e) {
-      RCLCPP_WARN(get_logger(), "failed to resolve melo script path: %s", e.what());
     }
   }
 

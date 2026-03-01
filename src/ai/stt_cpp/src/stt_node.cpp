@@ -28,17 +28,38 @@ SttNode::SttNode()
 void SttNode::declare_and_get_parameters()
 {
   declare_parameter<bool>("stt_enabled", true);
+  // "auto" = moonshine_onnx → groq fallback
+  // "moonshine_onnx" = local only (offline mode)
+  // "groq" = cloud only (hybrid mode)
+  declare_parameter<string>("stt_engine", "auto");
+
+  // Groq Whisper API
   declare_parameter<string>("groq_api_key", "");
   declare_parameter<string>("groq_model", "whisper-large-v3-turbo");
   declare_parameter<string>("groq_language", "ko");
   declare_parameter<int>("groq_timeout_sec", 30);
 
+  // Moonshine ONNX (local)
+  declare_parameter<string>("onnx_encoder_path", "");
+  declare_parameter<string>("onnx_decoder_path", "");
+  declare_parameter<bool>("onnx_use_cuda", true);
+  declare_parameter<int>("onnx_gpu_device_id", 0);
+  declare_parameter<int>("onnx_intra_threads", 2);
+
   SttConfig stt_cfg;
   stt_cfg.enabled       = get_parameter("stt_enabled").as_bool();
+  stt_cfg.engine        = get_parameter("stt_engine").as_string();
+
   stt_cfg.groq_api_key  = get_parameter("groq_api_key").as_string();
   stt_cfg.groq_model    = get_parameter("groq_model").as_string();
   stt_cfg.groq_language = get_parameter("groq_language").as_string();
   stt_cfg.groq_timeout_sec = get_parameter("groq_timeout_sec").as_int();
+
+  stt_cfg.onnx_encoder_path = get_parameter("onnx_encoder_path").as_string();
+  stt_cfg.onnx_decoder_path = get_parameter("onnx_decoder_path").as_string();
+  stt_cfg.onnx_use_cuda     = get_parameter("onnx_use_cuda").as_bool();
+  stt_cfg.onnx_gpu_device_id = static_cast<int>(get_parameter("onnx_gpu_device_id").as_int());
+  stt_cfg.onnx_intra_threads = static_cast<int>(get_parameter("onnx_intra_threads").as_int());
 
   if (stt_cfg.groq_api_key.empty()) {
     const char * env_key = getenv("GROQ_API_KEY");
@@ -47,6 +68,7 @@ void SttNode::declare_and_get_parameters()
     }
   }
 
+  RCLCPP_INFO(get_logger(), "stt engine mode: %s", stt_cfg.engine.c_str());
   stt_engine_ = unique_ptr<SttEngine>(new SttEngine(stt_cfg));
 }
 

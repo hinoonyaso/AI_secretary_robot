@@ -44,7 +44,7 @@ colcon build --base-paths src --packages-select ros_robot_controller_msgs ros_ro
 ### 클라우드 모드 (API 키 설정 시)
 - STT  : moonshine-tiny-ko (로컬)
 - LLM  : OpenAI → Groq → Gemini → Ollama (순서대로 폴백)
-- TTS  : edge-tts(클라우드) → MeloTTS → espeak-ng (순서대로 폴백)
+- TTS  : edge-tts(클라우드) → Piper → espeak-ng (순서대로 폴백)
 ```bash
 ros2 launch tts_cpp voice_pipeline_with_tts.launch.py
 ```
@@ -52,7 +52,7 @@ ros2 launch tts_cpp voice_pipeline_with_tts.launch.py
 ### 로컬 모드 (인터넷 없이 완전 로컬)
 - STT  : moonshine-tiny-ko (로컬)
 - LLM  : Ollama 직접 호출 (클라우드 API 스킵, ollama 실행 필요)
-- TTS  : MeloTTS → espeak-ng (edge-tts 스킵)
+- TTS  : Piper → espeak-ng (edge-tts 스킵)
 ```bash
 ros2 launch tts_cpp voice_pipeline_local.launch.py
 ```

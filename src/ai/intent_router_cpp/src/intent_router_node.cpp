@@ -126,6 +126,8 @@ void IntentRouterNode::declare_and_get_parameters()
     "emergency_keywords",
     vector<string>{"멈춰", "정지", "stop", "그만", "위험"});
 
+  // "auto" = groq → keyword fallback | "keyword" = keyword only | "groq" = groq only
+  declare_parameter<string>("intent_provider", "auto");
   declare_parameter<bool>("groq_enabled", true);
   declare_parameter<string>("groq_api_key", "");
   declare_parameter<string>("groq_model", "llama-3.3-70b-versatile");
@@ -154,7 +156,16 @@ void IntentRouterNode::declare_and_get_parameters()
     "\"additionalProperties\":false}");
 
   emergency_keywords_ = get_parameter("emergency_keywords").as_string_array();
-  groq_enabled_       = get_parameter("groq_enabled").as_bool();
+
+  // intent_provider가 "keyword"면 groq_enabled를 false로 오버라이드
+  const string intent_provider = get_parameter("intent_provider").as_string();
+  if (intent_provider == "keyword") {
+    groq_enabled_ = false;
+  } else if (intent_provider == "groq") {
+    groq_enabled_ = true;
+  } else {
+    groq_enabled_ = get_parameter("groq_enabled").as_bool();
+  }
   groq_api_key_       = get_parameter("groq_api_key").as_string();
   if (groq_api_key_.empty()) {
     const char * env_key = getenv("GROQ_API_KEY");

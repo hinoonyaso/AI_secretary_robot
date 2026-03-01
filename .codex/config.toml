@@ -1,0 +1,14 @@
+exclude = [
+  ".git/",
+  "build/",
+  "install/",
+  "log/",
+  "logs/",
+  "node_modules/",
+  "*.log",
+  "*.tmp",
+  "*.cache",
+  "src/ai/tts_cpp/output/",
+  "src/ai/wake_vad_cpp/record_sound/",
+  "SDK/onnxruntime-linux-aarch64-1.24.1/lib/",
+]

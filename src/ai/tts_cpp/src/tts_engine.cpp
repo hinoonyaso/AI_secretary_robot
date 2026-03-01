@@ -1,15 +1,10 @@
 #include "tts_cpp/tts_engine.hpp"
 
-#include <rover_common/curl_utils.hpp>
-#include <rover_common/json_utils.hpp>
 #include <rover_common/shell_utils.hpp>
 #include <rover_common/string_utils.hpp>
 
-#include <curl/curl.h>
-
 #include <chrono>
 #include <filesystem>
-#include <cstring>
 #include <sstream>
 #include <system_error>
 
@@ -18,33 +13,6 @@ using namespace std;
 
 namespace tts_cpp
 {
-namespace
-{
-
-static const rover_common::CurlGlobalGuard curl_guard;
-
-size_t curl_header_callback(char * buffer, size_t size, size_t nitems, void * userdata)
-{
-  const size_t total = size * nitems;
-  if (userdata == nullptr || total == 0) {
-    return total;
-  }
-  auto * sample_rate = static_cast<uint32_t *>(userdata);
-  const string line(buffer, buffer + total);
-  const string key = "X-Sample-Rate:";
-  if (line.rfind(key, 0) == 0) {
-    const string value = rover_common::trim(line.substr(key.size()));
-    try {
-      const unsigned long parsed = std::stoul(value);
-      *sample_rate = static_cast<uint32_t>(parsed);
-    } catch (...) {
-    }
-  }
-  return total;
-}
-
-}  // namespace
-
 TtsEngine::TtsEngine(const TtsConfig & config)
 : config_(config)
 {
@@ -57,8 +25,8 @@ TtsEngine::TtsEngine(const TtsConfig & config)
 TtsResult TtsEngine::synthesize(const string & text) const
 {
   /// engine 파라미터에 따라 시작점을 결정하는 TTS 체인
-  /// "auto"  : edge-tts(클라우드) → MeloTTS(로컬) → espeak-ng(로컬)
-  /// "melo"  : MeloTTS(로컬) → espeak-ng(로컬)
+  /// "auto"  : edge-tts(클라우드) → Piper(로컬) → espeak-ng(로컬)
+  /// "piper" : Piper(로컬) → espeak-ng(로컬)
   /// "espeak": espeak-ng(로컬)
   TtsResult out;
   if (!config_.enabled) {
@@ -70,8 +38,8 @@ TtsResult TtsEngine::synthesize(const string & text) const
     return out;
   }
 
-  const bool skip_edge = (config_.engine == "melo" || config_.engine == "espeak");
-  const bool skip_melo = (config_.engine == "espeak");
+  const bool skip_edge = (config_.engine == "piper" || config_.engine == "espeak");
+  const bool skip_piper = (config_.engine == "espeak");
 
   TtsResult edge;
   if (!skip_edge) {
@@ -82,34 +50,39 @@ TtsResult TtsEngine::synthesize(const string & text) const
     }
   }
 
-  TtsResult melo;
-  if (!skip_melo) {
-    const string melo_path = make_output_path("wav");
-    melo = synthesize_melo(text, melo_path);
-    melo.used_fallback = skip_edge ? false : true;
-    if (melo.ok) {
-      return melo;
+  TtsResult piper;
+  if (!skip_piper) {
+    const string piper_path = make_output_path("wav");
+    piper = synthesize_piper(text, piper_path);
+    piper.used_fallback = skip_edge ? false : true;
+    if (piper.ok) {
+      return piper;
     }
   }
 
   const string espeak_path = make_output_path("wav");
   TtsResult espeak = synthesize_espeak(text, espeak_path);
-  espeak.used_fallback = (skip_edge && skip_melo) ? false : true;
+  espeak.used_fallback = (skip_edge && skip_piper) ? false : true;
   if (espeak.ok) {
     return espeak;
   }
 
   TtsResult merged;
   merged.ok = false;
-  merged.engine = skip_edge ? (skip_melo ? "espeak-ng" : "melotts+espeak-ng")
-                             : "edge-tts+melotts+espeak-ng";
+  string engines;
   if (!skip_edge) {
-    merged.error += "edge failed: " + edge.error + " | ";
+    engines += "edge-tts";
+    merged.error += "edge failed: " + edge.error;
   }
-  if (!skip_melo) {
-    merged.error += "melo failed: " + melo.error + " | ";
+  if (!skip_piper) {
+    if (!engines.empty()) { engines += "+"; merged.error += " | "; }
+    engines += "piper";
+    merged.error += "piper failed: " + piper.error;
   }
+  if (!engines.empty()) { engines += "+"; merged.error += " | "; }
+  engines += "espeak-ng";
   merged.error += "espeak failed: " + espeak.error;
+  merged.engine = engines;
   return merged;
 }
 
@@ -151,113 +124,48 @@ TtsResult TtsEngine::synthesize_edge(const string & text, const string & out_pat
   return out;
 }
 
-TtsResult TtsEngine::synthesize_melo(const string & text, const string & out_path) const
+TtsResult TtsEngine::synthesize_piper(const string & text, const string & out_path) const
 {
-  /// MeloTTS 상주 서버에서 PCM을 직접 받아오고 실패 시 스크립트 fallback을 시도
+  /// Piper TTS (로컬 VITS ONNX) — sherpa-onnx 또는 piper 바이너리 호출
   TtsResult out;
-  out.engine = "MeloTTS-server";
+  out.engine = "piper";
 
-  if (!config_.melo_server_url.empty()) {
-    CURL * curl = curl_easy_init();
-    if (curl != nullptr) {
-      string response_body;
-      uint32_t sample_rate = 0U;
-      double speed_value = 1.0;
-      try {
-        speed_value = stod(config_.melo_speed);
-      } catch (...) {
-        speed_value = 1.0;
-      }
-      ostringstream body;
-      body << "{\"text\":\"" << rover_common::json_escape(text)
-           << "\",\"speed\":" << speed_value << "}";
-      const string request_body = body.str();
-      struct curl_slist * headers = nullptr;
-      headers = curl_slist_append(headers, "Content-Type: application/json");
-
-      curl_easy_setopt(curl, CURLOPT_URL, config_.melo_server_url.c_str());
-      curl_easy_setopt(curl, CURLOPT_POST, 1L);
-      curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-      curl_easy_setopt(curl, CURLOPT_POSTFIELDS, request_body.c_str());
-      curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, request_body.size());
-      curl_easy_setopt(curl, CURLOPT_TIMEOUT, config_.melo_server_timeout_sec);
-      curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 2L);
-      curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, rover_common::curl_write_callback);
-      curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_body);
-      curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, curl_header_callback);
-      curl_easy_setopt(curl, CURLOPT_HEADERDATA, &sample_rate);
-
-      const CURLcode rc = curl_easy_perform(curl);
-      long http_code = 0;
-      curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
-
-      if (rc == CURLE_OK && http_code == 200 && !response_body.empty()) {
-        if (response_body.size() % sizeof(int16_t) == 0U) {
-          out.ok = true;
-          out.engine = "MeloTTS-server";
-          out.pcm_sample_rate = (sample_rate == 0U) ? 44100U : sample_rate;
-          out.pcm_channels = 1;
-          out.pcm_samples.resize(response_body.size() / sizeof(int16_t));
-          std::memcpy(
-            out.pcm_samples.data(),
-            response_body.data(),
-            out.pcm_samples.size() * sizeof(int16_t));
-          curl_slist_free_all(headers);
-          curl_easy_cleanup(curl);
-          return out;
-        }
-        out.error = "melo_server_invalid_pcm_size";
-      } else if (rc != CURLE_OK) {
-        out.error = "melo_server_curl_error:" + string(curl_easy_strerror(rc));
-      } else {
-        ostringstream oss;
-        oss << "melo_server_http_" << http_code;
-        out.error = oss.str();
-      }
-
-      curl_slist_free_all(headers);
-      curl_easy_cleanup(curl);
-    } else {
-      out.error = "melo_server_curl_init_failed";
-    }
-  }
-
-  if (config_.melo_script_path.empty()) {
-    if (out.error.empty()) {
-      out.error = "melo_script_path_empty";
-    }
+  if (config_.piper_model_path.empty()) {
+    out.error = "piper_model_path_empty";
     return out;
   }
 
   ostringstream cmd;
-  cmd << "python3 " << rover_common::shell_escape_single_quote(config_.melo_script_path)
-      << " --text " << rover_common::shell_escape_single_quote(text)
-      << " --output_file " << rover_common::shell_escape_single_quote(out_path)
-      << " --language " << rover_common::shell_escape_single_quote(config_.melo_language)
-      << " --speaker " << rover_common::shell_escape_single_quote(config_.melo_speaker)
-      << " --speed " << rover_common::shell_escape_single_quote(config_.melo_speed)
-      << " --device " << rover_common::shell_escape_single_quote(config_.melo_device)
+  cmd << rover_common::shell_escape_single_quote(config_.piper_executable)
+      << " --model " << rover_common::shell_escape_single_quote(config_.piper_model_path);
+  if (!config_.piper_config_path.empty()) {
+    cmd << " --config " << rover_common::shell_escape_single_quote(config_.piper_config_path);
+  }
+  if (!config_.piper_speaker.empty()) {
+    cmd << " --speaker " << rover_common::shell_escape_single_quote(config_.piper_speaker);
+  }
+  cmd << " --output_file " << rover_common::shell_escape_single_quote(out_path)
       << " 2>&1";
 
-  const rover_common::ShellResult shell = rover_common::run_shell_command(cmd.str());
+  // piper reads text from stdin
+  const string full_cmd = string("echo ") + rover_common::shell_escape_single_quote(text)
+    + " | " + cmd.str();
+
+  const rover_common::ShellResult shell = rover_common::run_shell_command(full_cmd);
   if (shell.exit_code < 0) {
-    out.error = out.error.empty() ? "melo_popen_failed" : out.error + " | melo_popen_failed";
+    out.error = "piper_popen_failed";
     return out;
   }
+
   if (shell.ok) {
     out.ok = true;
-    out.engine = "MeloTTS";
     out.audio_path = out_path;
     return out;
   }
 
   ostringstream err;
-  err << "melo_failed(exit=" << shell.exit_code << "): " << rover_common::trim(shell.output);
-  if (out.error.empty()) {
-    out.error = err.str();
-  } else {
-    out.error += " | " + err.str();
-  }
+  err << "piper_failed(exit=" << shell.exit_code << "): " << rover_common::trim(shell.output);
+  out.error = err.str();
   return out;
 }
 

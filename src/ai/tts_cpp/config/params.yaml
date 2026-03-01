@@ -12,20 +12,23 @@ tts_node:
     tts_enabled: true
     output_dir: "/home/ubuntu/rover_ws/src/tts_cpp/output"
 
+    # "auto" = edge → piper → espeak
+    # "piper" = piper → espeak (offline)
+    # "espeak" = espeak only
+    tts_engine: "auto"
 
+    # Edge TTS (cloud)
     edge_script_path: ""
     edge_voice: "ko-KR-SunHiNeural"
     edge_rate: "+0%"
     edge_volume: "+0%"
 
-    melo_script_path: ""
-    melo_language: "KR"
-    melo_speaker: ""
-    melo_speed: "1.0"
-    melo_device: "auto"
-    melo_server_url: "http://127.0.0.1:5500/synthesize"
-    melo_server_timeout_sec: 15
+    # Piper TTS (local ONNX)
+    piper_executable: "piper"
+    piper_model_path: ""
+    piper_config_path: ""
+    piper_speaker: ""
 
+    # espeak-ng (fallback)
     espeak_executable: "espeak-ng"
     espeak_voice: "ko"
-    tts_engine: "auto"

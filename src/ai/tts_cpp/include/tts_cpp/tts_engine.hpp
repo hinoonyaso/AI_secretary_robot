@@ -11,7 +11,7 @@ struct TtsConfig
 {
   bool enabled = true;
   std::string output_dir = "/tmp/tts_audio";
-  // "auto"=edge→melo→espeak, "melo"=melo→espeak, "espeak"=espeak only
+  // "auto"=edge→piper→espeak, "piper"=piper only, "espeak"=espeak only
   std::string engine = "auto";
 
   std::string edge_script_path;
@@ -19,13 +19,10 @@ struct TtsConfig
   std::string edge_rate = "+0%";
   std::string edge_volume = "+0%";
 
-  std::string melo_script_path;
-  std::string melo_language = "KR";
-  std::string melo_speaker = "";
-  std::string melo_speed = "1.0";
-  std::string melo_device = "auto";
-  std::string melo_server_url = "http://127.0.0.1:5500/synthesize";
-  long melo_server_timeout_sec = 15;
+  std::string piper_executable = "piper";
+  std::string piper_model_path;
+  std::string piper_config_path;
+  std::string piper_speaker = "";
 
   std::string espeak_executable = "espeak-ng";
   std::string espeak_voice = "ko";
@@ -53,7 +50,7 @@ public:
 
 private:
   TtsResult synthesize_edge(const std::string & text, const std::string & out_path) const;
-  TtsResult synthesize_melo(const std::string & text, const std::string & out_path) const;
+  TtsResult synthesize_piper(const std::string & text, const std::string & out_path) const;
   TtsResult synthesize_espeak(const std::string & text, const std::string & out_path) const;
   std::string make_output_path(const std::string & extension) const;
 

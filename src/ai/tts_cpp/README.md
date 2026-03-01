@@ -2,7 +2,7 @@
 
 ROS2 C++ TTS node with fallback order:
 1. edge-tts (`ko-KR-SunHiNeural`)
-2. MeloTTS (local CPU/GPU)
+2. Piper TTS (local ONNX)
 3. espeak-ng (local fallback)
 
 Topics:
@@ -46,12 +46,6 @@ Install edge-tts once:
 
 ```bash
 python3 -m pip install --user edge-tts
-```
-
-MeloTTS fallback requires:
-
-```bash
-python3 -m pip install --user melo-tts torch
 ```
 
 Local playback tools (install at least one):

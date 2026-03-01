@@ -2,7 +2,7 @@
 로컬 전용 음성 파이프라인 런치파일
   - STT  : moonshine-tiny-ko (로컬)
   - LLM  : ollama (로컬, 클라우드 API 스킵)
-  - TTS  : MeloTTS → espeak-ng (로컬, edge-tts 스킵)
+  - TTS  : Piper → espeak-ng (로컬, edge-tts 스킵)
   - 기타  : wake_vad, intent_router 모두 로컬
 
 사용법:
@@ -14,7 +14,6 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import ExecuteProcess
 from launch.actions import IncludeLaunchDescription
-from launch.actions import TimerAction
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import PathJoinSubstitution
 from launch_ros.actions import Node
@@ -57,7 +56,7 @@ def generate_launch_description():
         output="screen",
     )
 
-    # ── TTS: MeloTTS → espeak-ng (edge-tts 스킵) ──
+    # ── TTS: Piper → espeak-ng (edge-tts 스킵) ──
     tts_params = os.path.join(
         get_package_share_directory("tts_cpp"), "config", "params.yaml")
 
@@ -66,30 +65,14 @@ def generate_launch_description():
         executable="tts_node",
         name="tts_node",
         output="screen",
-        parameters=[tts_params, {"tts_engine": "melo"}],
+        parameters=[tts_params, {"tts_engine": "piper"}],
     )
-    tts_share = get_package_share_directory("tts_cpp")
-    tts_server = ExecuteProcess(
-        cmd=[
-            "python3",
-            os.path.join(tts_share, "scripts", "melo_tts_server.py"),
-            "--host",
-            "127.0.0.1",
-            "--port",
-            "5500",
-            "--language", "KR",
-            "--device", "auto",
-        ],
-        output="screen",
-    )
-    delayed_tts_node = TimerAction(period=3.0, actions=[tts_node])
 
     return LaunchDescription([
         ollama_serve,
         ollama_warmup,
-        tts_server,
         IncludeLaunchDescription(PythonLaunchDescriptionSource(wake_stt_launch)),
         IncludeLaunchDescription(PythonLaunchDescriptionSource(router_launch)),
         llm_node,
-        delayed_tts_node,
+        tts_node,
     ])

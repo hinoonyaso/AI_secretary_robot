@@ -6,6 +6,10 @@ intent_router_node:
       - "stop"
       - "그만"
       - "위험"
+    # "auto" = groq → keyword fallback
+    # "keyword" = keyword only (offline mode)
+    # "groq" = groq LLM only
+    intent_provider: "auto"
     groq_enabled: false
     groq_api_key: ""
     groq_model: "llama-3.3-70b-versatile"

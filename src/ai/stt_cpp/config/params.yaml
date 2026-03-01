@@ -1,7 +1,20 @@
 stt_node:
   ros__parameters:
     stt_enabled: true
+    # "auto" = moonshine_onnx → groq fallback
+    # "moonshine_onnx" = local only (offline mode)
+    # "groq" = cloud only
+    stt_engine: "auto"
+
+    # Groq Whisper API
     groq_api_key: ""
-    groq_model: "whisper-large-v3"
+    groq_model: "whisper-large-v3-turbo"
     groq_language: "ko"
     groq_timeout_sec: 30
+
+    # Moonshine ONNX (local)
+    onnx_encoder_path: ""
+    onnx_decoder_path: ""
+    onnx_use_cuda: true
+    onnx_gpu_device_id: 0
+    onnx_intra_threads: 2

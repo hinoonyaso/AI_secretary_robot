@@ -3,7 +3,7 @@
 <package format="3">
   <name>tts_cpp</name>
   <version>0.0.1</version>
-  <description>TTS ROS2 C++ node with fallback chain: edge-tts -> MeloTTS -> espeak-ng</description>
+  <description>TTS ROS2 C++ node with fallback chain: edge-tts -> piper -> espeak-ng</description>
   <maintainer email="hinoonyaso@gmail.com">ubuntu</maintainer>
   <license>Apache-2.0</license>
 
