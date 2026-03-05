@@ -24,6 +24,23 @@
 
 ---
 
+# 음성 파이프라인
+```mermaid
+flowchart TD
+    A[🎤 Wake Word<br/> wakeword detection] --> B[🗣️ STT<br/> Speech-to-Text]
+    B --> C[🧭 Intent Router<br/> intent classification & routing]
+    C --> D[🧠 LLM<br/> reasoning & response generation]
+    D --> E[⚡ Action Executor<br/> api calls & device control]
+    E --> F[🔊 TTS<br/> Text-to-Speech]
+
+    style A fill:#ff6b6b,color:#fff
+    style B fill:#4ecdc4,color:#fff
+    style C fill:#45b7d1,color:#fff
+    style D fill:#96ceb4,color:#fff
+    style E fill:#feca57,color:#000
+    style F fill:#ff9ff3,color:#fff
+```
+
 # 🔵 오프라인 모드 (최우선)
 
 ## ✅ Planning 기준과 일치
